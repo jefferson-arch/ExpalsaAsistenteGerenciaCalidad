@@ -1,2 +1,2 @@
-# ExpalsaAsistenteGerenciaCalidad
+# AsistenteGerenciaCalidad
 # Página en mantenimiento
