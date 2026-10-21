@@ -1,2 +1,1 @@
-# AsistenteGerenciaCalidad
 # Página en mantenimiento
