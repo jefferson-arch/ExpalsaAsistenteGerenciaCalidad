@@ -1104,7 +1104,7 @@
         return {
           cuenta:
             Number(m.neto) > 0 && piezas > 0
-              ? Math.round((piezas / Number(m.neto)) * 453.59237)
+              ? Math.round((piezas / Number(m.neto)) * 2.2 * 1000)
               : null,
           uniformidad:
             Number(m.pequenos) > 0
