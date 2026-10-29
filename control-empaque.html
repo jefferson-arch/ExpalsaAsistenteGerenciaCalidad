@@ -1050,6 +1050,114 @@
           margin: 8mm;
         }
       }
+      .muestra.iniciada {
+        background: #e8f5e9;
+      }
+      .muestra.iniciada .fila,
+      .muestra.iniciada .defecto {
+        background: transparent;
+      }
+      #nuevo-lote {
+        display: grid;
+        grid-template-columns: 1fr 2fr 1fr auto;
+        gap: 10px;
+        align-items: end;
+        margin: 12px 0;
+      }
+      #nuevo-lote label {
+        display: grid;
+        gap: 5px;
+        font-size: 11px;
+        color: #425b65;
+      }
+      #nuevo-lote input {
+        width: 100%;
+        min-width: 0;
+        padding: 10px;
+        border: 1px solid #bdcdd2;
+        background: white;
+      }
+      #nuevo-lote button {
+        padding: 11px 16px;
+        background: #163b4c;
+        color: white;
+      }
+      #teclado {
+        position: fixed;
+        z-index: 10000;
+        width: 260px;
+        padding: 8px;
+        background: #f3f6f7;
+        border: 1px solid #8aa4af;
+        box-shadow: 0 4px 18px #1234;
+      }
+      #teclado[hidden] {
+        display: none;
+      }
+      #teclado .teclas {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 4px;
+      }
+      #teclado.alfabetico .teclas {
+        grid-template-columns: repeat(5, 1fr);
+      }
+      #teclado button {
+        min-width: 0;
+        height: 38px;
+        border: 1px solid #c1d0d5;
+        background: white;
+        color: #163b4c;
+        font-size: 15px;
+        padding: 0 3px;
+      }
+      #teclado .teclado-barra {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 4px;
+        margin-bottom: 6px;
+      }
+      #teclado .teclado-barra span {
+        font-size: 10px;
+        overflow: hidden;
+      }
+      #teclado .acciones-teclado {
+        display: grid;
+        grid-template-columns: 1fr 1fr 1fr;
+        gap: 4px;
+        margin-top: 4px;
+      }
+      #teclado .avanzar {
+        background: #163b4c;
+        color: white;
+      }
+      input.campo-activo {
+        outline: 2px solid #28775a;
+        outline-offset: -2px;
+      }
+      #foto-guardada img {
+        display: block;
+        max-width: 75vw;
+        max-height: 65vh;
+        margin: 12px auto;
+      }
+      @media (max-width: 650px) {
+        #nuevo-lote {
+          grid-template-columns: 1fr 1fr;
+        }
+        body.teclado-abierto #reporte .columnas {
+          width: 54vw;
+        }
+        body.teclado-abierto #reporte .muestra {
+          padding-left: 4px;
+          padding-right: 4px;
+        }
+        #teclado button {
+          height: 34px;
+          font-size: 12px;
+        }
+      }
     </style>
   </head>
   <body>
@@ -1160,6 +1268,14 @@
             </table>
           </section>
         </div>
+        <form id="nuevo-lote" autocomplete="off">
+          <label>LOTE<input id="lote-nuevo" required maxlength="40" /></label>
+          <label
+            >PROVEEDOR<input id="proveedor-nuevo" required maxlength="120"
+          /></label>
+          <label>ÁREA<input id="area-nueva" required maxlength="60" /></label>
+          <button type="submit">INGRESAR LOTE</button>
+        </form>
         <button class="sesion" id="salir">CERRAR SESIÓN</button>
         <div class="utilidades">
           <button id="sembrar" hidden>CARGAR DATOS DEL EJERCICIO</button
@@ -1282,6 +1398,30 @@
     <div id="notificacion" role="status" hidden></div>
     <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js"></script>
+    <dialog id="foto-guardada">
+      <h2>Fotografía guardada</h2>
+      <img id="imagen-guardada" alt="Evidencia del análisis" />
+      <div class="botones">
+        <button id="nueva-foto">TOMAR NUEVAMENTE</button
+        ><button data-cerrar="foto-guardada">CERRAR</button>
+      </div>
+    </dialog>
+    <div id="teclado" hidden aria-label="Teclado en pantalla">
+      <div class="teclado-barra">
+        <span id="teclado-campo"></span
+        ><button type="button" data-tecla="cerrar" aria-label="Cerrar teclado">
+          ✕
+        </button>
+      </div>
+      <div class="teclas" id="teclas"></div>
+      <div class="acciones-teclado">
+        <button type="button" data-tecla="modo">ABC</button
+        ><button type="button" data-tecla="borrar">⌫</button
+        ><button type="button" data-tecla="enter" class="avanzar">
+          Enter ↓
+        </button>
+      </div>
+    </div>
     <script type="module">
       import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
       import {
@@ -1373,6 +1513,480 @@
       document
         .querySelectorAll(".logo-cabecera")
         .forEach((img) => (img.src = $("logo").src));
+      let cambios = {},
+        guardando = null,
+        temporizador,
+        ultimoCampo = null;
+      let campoTeclado = null,
+        alfabetico = false,
+        mayusculas = true,
+        restaurandoFoco = false;
+      function claveLocal(nombre) {
+        return "empaque-" + (usuario?.uid || "acceso") + "-" + nombre;
+      }
+      function leerLocal(nombre, defecto) {
+        try {
+          return (
+            JSON.parse(localStorage.getItem(claveLocal(nombre))) ?? defecto
+          );
+        } catch {
+          return defecto;
+        }
+      }
+      function escribirLocal(nombre, valor) {
+        try {
+          localStorage.setItem(claveLocal(nombre), JSON.stringify(valor));
+        } catch {
+          if (actual)
+            $("estado-reporte").textContent =
+              "No hay espacio para el respaldo local";
+        }
+      }
+      function guardarRespaldo() {
+        if (!actual || lectura) return;
+        escribirLocal("reporte-" + actual.id, {
+          cambios,
+          vacias,
+          orden: ordenMuestras,
+          inicio: inicioMuestras,
+          campo: ultimoCampo,
+        });
+      }
+      function iniciada(m) {
+        return (
+          !!m.op ||
+          !!m.codigo ||
+          [
+            "bruto",
+            "neto",
+            "piezas",
+            "grandes",
+            "pequenos",
+            ...defectos.map((x) => x[0]),
+          ].some((k) => m[k] !== "" && m[k] != null)
+        );
+      }
+      function programarGuardado() {
+        clearTimeout(temporizador);
+        temporizador = setTimeout(
+          () =>
+            sincronizar().catch((e) => {
+              $("estado-reporte").textContent = navigator.onLine
+                ? "Pendiente: " + errorTexto(e)
+                : "Pendiente de conexión";
+            }),
+          600,
+        );
+      }
+      function registrarEntrada(el, finalizar) {
+        if (
+          !el.dataset.campo ||
+          lectura ||
+          !actual ||
+          actual.estado !== "abierto"
+        )
+          return;
+        const k = el.dataset.campo,
+          m = structuredClone(muestraPorId(el.dataset.muestra));
+        if (!m) return;
+        if (["op", "codigo"].includes(k) && String(m[k] || "") !== el.value) {
+          m.fotos = {};
+          if (k === "op") m.codigo = "";
+        }
+        m[k] = ["op", "codigo", "color"].includes(k)
+          ? el.value
+          : el.value === ""
+            ? ""
+            : Number(el.value);
+        cambios[m.id] = {
+          m,
+          finalizar,
+          version: (cambios[m.id]?.version || 0) + 1,
+        };
+        el.closest(".muestra")?.classList.add("iniciada");
+        ultimoCampo = identidadCampo(el);
+        guardarRespaldo();
+        $("estado-reporte").textContent = navigator.onLine
+          ? "Guardando…"
+          : "Pendiente de conexión";
+        programarGuardado();
+      }
+      async function sincronizar() {
+        clearTimeout(temporizador);
+        if (guardando) {
+          await guardando;
+          if (Object.keys(cambios).length) return sincronizar();
+          return;
+        }
+        if (!actual || !Object.keys(cambios).length || lectura) return;
+        if (!navigator.onLine)
+          throw Error(
+            "Datos pendientes de conexión. Conservados en este dispositivo.",
+          );
+        guardando = (async () => {
+          for (const id of Object.keys(cambios)) {
+            const entrada = structuredClone(cambios[id]);
+            if (!entrada) continue;
+            const m = entrada.m;
+            for (const k of [
+              "bruto",
+              "neto",
+              "piezas",
+              "grandes",
+              "pequenos",
+              ...defectos.map((x) => x[0]),
+            ])
+              if (m[k] !== "" && (!Number.isFinite(m[k]) || m[k] < 0))
+                throw Error("Revise el valor de " + k);
+            await guardarMuestra(m, null, entrada.finalizar);
+            if (cambios[id]?.version === entrada.version) delete cambios[id];
+            guardarRespaldo();
+            if (entrada.finalizar && m.op) {
+              try {
+                await consultarOP(m.op);
+              } catch (e) {
+                avisar(errorTexto(e));
+              }
+            }
+          }
+        })();
+        try {
+          await guardando;
+        } finally {
+          guardando = null;
+        }
+        if (Object.keys(cambios).length) programarGuardado();
+        dibujarReporte();
+      }
+      window.addEventListener("online", programarGuardado);
+      window.addEventListener("pagehide", guardarRespaldo);
+      document.addEventListener("visibilitychange", () => {
+        if (document.hidden) {
+          guardarRespaldo();
+          programarGuardado();
+        }
+      });
+      function identidadCampo(el) {
+        return { muestra: el.dataset.muestra, campo: el.dataset.campo };
+      }
+      function enfocarCampo(foco, mostrar = true, posicion = null) {
+        const el = [...$("columnas").querySelectorAll("[data-campo]")].find(
+          (x) =>
+            x.dataset.muestra === foco.muestra &&
+            x.dataset.campo === foco.campo,
+        );
+        if (!el || el.disabled) return;
+        restaurandoFoco = true;
+        el.focus({ preventScroll: true });
+        if (el.tagName === "INPUT") {
+          campoTeclado = el;
+          el.classList.add("campo-activo");
+          if (posicion != null)
+            try {
+              el.setSelectionRange(posicion, posicion);
+            } catch {}
+          if (mostrar) {
+            $("teclado").hidden = false;
+            document.body.classList.add("teclado-abierto");
+            posicionarTeclado();
+          }
+        }
+        restaurandoFoco = false;
+      }
+      function prepararEntrada(el) {
+        if (["checkbox", "radio", "file", "submit", "button"].includes(el.type))
+          return;
+        if (el.type === "number") {
+          el.dataset.numerico = "1";
+          el.type = "text";
+        }
+        if (el.type === "email") el.type = "text";
+        el.inputMode = "none";
+        el.readOnly = true;
+        el.autocomplete = "off";
+        el.setAttribute("virtualkeyboardpolicy", "manual");
+      }
+      function cerrarTeclado() {
+        if (!$("teclado")) return;
+        $("teclado").hidden = true;
+        campoTeclado?.classList.remove("campo-activo");
+        campoTeclado = null;
+        document.body.classList.remove("teclado-abierto");
+      }
+      function dibujarTeclado() {
+        $("teclado").classList.toggle("alfabetico", alfabetico);
+        const teclas = alfabetico
+          ? (mayusculas
+              ? "QWERTYUIOPASDFGHJKLÑZXCVBNM"
+              : "qwertyuiopasdfghjklñzxcvbnm"
+            )
+              .concat("@._-!?#$%&+*/= ")
+              .split("")
+          : ["7", "8", "9", "4", "5", "6", "1", "2", "3", "0", ".", "-"];
+        $("teclas").innerHTML = teclas
+          .map(
+            (t) =>
+              '<button type="button" data-letra="' +
+              escapar(t) +
+              '">' +
+              (t === " " ? "␣" : escapar(t)) +
+              "</button>",
+          )
+          .join("");
+        if (alfabetico)
+          $("teclas").insertAdjacentHTML(
+            "beforeend",
+            '<button type="button" data-tecla="mayusculas">Aa</button>',
+          );
+        $("teclado").querySelector('[data-tecla="modo"]').textContent =
+          alfabetico ? "123" : "ABC";
+        posicionarTeclado();
+      }
+      function posicionarTeclado() {
+        if (!campoTeclado || $("teclado").hidden) return;
+        const panel = $("teclado"),
+          columna = campoTeclado.closest(".muestra");
+        let izquierda,
+          ancho = 260;
+        if (columna) {
+          const otras = [...$("columnas").children].filter(
+            (x) => x !== columna,
+          );
+          const vecino =
+            otras.find(
+              (x) =>
+                x.getBoundingClientRect().left >
+                columna.getBoundingClientRect().left,
+            ) || otras.at(-1);
+          if (innerWidth < 650 || !vecino) {
+            ancho = Math.floor(innerWidth * 0.42);
+            izquierda = innerWidth - ancho - 6;
+          } else {
+            const r = vecino.getBoundingClientRect();
+            ancho = Math.min(280, r.width - 4);
+            izquierda = r.left + 2;
+          }
+        } else {
+          const r = campoTeclado.getBoundingClientRect();
+          izquierda =
+            r.right + 12 + ancho < innerWidth
+              ? r.right + 12
+              : Math.max(8, r.left - ancho - 12);
+        }
+        panel.style.width = ancho + "px";
+        panel.style.left =
+          Math.max(4, Math.min(innerWidth - ancho - 4, izquierda)) + "px";
+        const r = campoTeclado.getBoundingClientRect();
+        let arriba = Math.max(
+          4,
+          Math.min(r.top, innerHeight - panel.offsetHeight - 8),
+        );
+        if (!columna)
+          arriba =
+            r.bottom + panel.offsetHeight + 8 < innerHeight
+              ? r.bottom + 8
+              : Math.max(4, r.top - panel.offsetHeight - 8);
+        panel.style.top = arriba + "px";
+      }
+      function editarConTeclado(letra, borrar = false) {
+        const el = campoTeclado;
+        if (!el || el.disabled) return;
+        const a = el.selectionStart ?? el.value.length,
+          b = el.selectionEnd ?? a;
+        const inicio = borrar && a === b ? Math.max(0, a - 1) : a;
+        const valor =
+          el.value.slice(0, inicio) + (borrar ? "" : letra) + el.value.slice(b);
+        if (el.maxLength > 0 && valor.length > el.maxLength) return;
+        if (
+          (el.dataset.numerico || el.dataset.campo === "op") &&
+          !/^\d*\.?\d*$/.test(valor)
+        )
+          return;
+        if (el.dataset.campo === "op" && valor.includes(".")) return;
+        el.value = valor;
+        const pos = inicio + (borrar ? 0 : letra.length);
+        el.setSelectionRange(pos, pos);
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+      }
+      async function siguienteCampo(el) {
+        if (!el) return;
+        el.dispatchEvent(new Event("change", { bubbles: true }));
+        const columna = el.closest(".muestra");
+        const contenedor =
+          columna || el.closest("form") || el.closest("dialog") || document;
+        const campos = [...contenedor.querySelectorAll("input, select")].filter(
+          (x) => !x.disabled && x.type !== "hidden",
+        );
+        const siguiente = campos[campos.indexOf(el) + 1];
+        if (siguiente) {
+          siguiente.focus();
+          if (siguiente.tagName === "SELECT") cerrarTeclado();
+        } else {
+          el.blur();
+          cerrarTeclado();
+        }
+      }
+      document.addEventListener("focusin", (e) => {
+        const el = e.target;
+        if (el.tagName === "SELECT") {
+          cerrarTeclado();
+          return;
+        }
+        if (
+          restaurandoFoco ||
+          el.tagName !== "INPUT" ||
+          el.disabled ||
+          ["checkbox", "radio", "file"].includes(el.type)
+        )
+          return;
+        prepararEntrada(el);
+        campoTeclado?.classList.remove("campo-activo");
+        campoTeclado = el;
+        el.classList.add("campo-activo");
+        alfabetico = false;
+        const dialogo = el.closest("dialog");
+        (dialogo || document.body).appendChild($("teclado"));
+        $("teclado-campo").textContent =
+          el.getAttribute("aria-label") ||
+          el.closest("label")?.textContent ||
+          "INGRESO";
+        $("teclado").hidden = false;
+        document.body.classList.add("teclado-abierto");
+        if (el.dataset.campo) {
+          ultimoCampo = identidadCampo(el);
+          guardarRespaldo();
+        }
+        dibujarTeclado();
+      });
+      document.addEventListener("focusout", (e) => {
+        if (
+          !restaurandoFoco &&
+          e.target.tagName === "INPUT" &&
+          e.target.dataset.campo &&
+          e.target.isConnected
+        )
+          e.target.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+      document.addEventListener("click", (e) => {
+        if (
+          e.target.tagName === "INPUT" &&
+          !e.target.disabled &&
+          $("teclado").hidden
+        )
+          e.target.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
+      });
+      document.addEventListener("pointerdown", (e) => {
+        if (e.target.closest("#teclado")) {
+          e.preventDefault();
+          return;
+        }
+        if (!e.target.closest("input")) cerrarTeclado();
+      });
+      document.addEventListener("keydown", (e) => {
+        if (e.target.tagName === "SELECT" && e.key === "Enter") {
+          e.preventDefault();
+          siguienteCampo(e.target);
+          return;
+        }
+        if (e.target.tagName !== "INPUT" || !e.target.readOnly) return;
+        campoTeclado = e.target;
+        if (e.key === "Enter") {
+          e.preventDefault();
+          siguienteCampo(e.target);
+        } else if (e.key === "Backspace") {
+          e.preventDefault();
+          editarConTeclado("", true);
+        } else if (e.key === "Delete") {
+          e.preventDefault();
+          const el = e.target;
+          if (
+            el.selectionStart === el.value.length &&
+            el.selectionStart === el.selectionEnd
+          )
+            return;
+          if (el.selectionStart === el.selectionEnd)
+            el.setSelectionRange(el.selectionStart, el.selectionEnd + 1);
+          editarConTeclado("", true);
+        } else if (
+          e.key.length === 1 &&
+          !e.ctrlKey &&
+          !e.metaKey &&
+          !e.altKey
+        ) {
+          e.preventDefault();
+          editarConTeclado(e.key);
+        }
+      });
+      document.addEventListener("paste", (e) => {
+        if (e.target.tagName !== "INPUT" || !e.target.readOnly) return;
+        e.preventDefault();
+        campoTeclado = e.target;
+        editarConTeclado(e.clipboardData.getData("text"));
+      });
+      $("teclado").addEventListener("click", (e) => {
+        const b = e.target.closest("button");
+        if (!b) return;
+        if (b.dataset.letra != null) editarConTeclado(b.dataset.letra);
+        if (b.dataset.tecla === "borrar") editarConTeclado("", true);
+        if (b.dataset.tecla === "mayusculas") {
+          mayusculas = !mayusculas;
+          dibujarTeclado();
+        }
+        if (b.dataset.tecla === "modo") {
+          alfabetico = !alfabetico;
+          dibujarTeclado();
+        }
+        if (b.dataset.tecla === "enter") siguienteCampo(campoTeclado);
+        if (b.dataset.tecla === "cerrar") {
+          campoTeclado?.dispatchEvent(new Event("change", { bubbles: true }));
+          cerrarTeclado();
+        }
+      });
+      window.addEventListener("resize", posicionarTeclado);
+      document.addEventListener("scroll", posicionarTeclado, true);
+      document.querySelectorAll("input").forEach(prepararEntrada);
+      $("nueva-foto").onclick = () => {
+        $("foto-guardada").close();
+        accion(() => abrirCamara("foto"));
+      };
+      $("nuevo-lote").addEventListener("input", () => {
+        escribirLocal("nuevo-lote", {
+          lote: $("lote-nuevo").value,
+          proveedor: $("proveedor-nuevo").value,
+          area: $("area-nueva").value,
+        });
+      });
+      $("nuevo-lote").onsubmit = (e) => {
+        e.preventDefault();
+        accion(async () => {
+          const lote = $("lote-nuevo").value.trim(),
+            proveedor = $("proveedor-nuevo").value.trim(),
+            area = $("area-nueva").value.trim();
+          if (!lote || !proveedor || !area)
+            throw Error("Complete lote, proveedor y área.");
+          if (reportes.some((r) => r.lote === lote && r.estado === "abierto"))
+            throw Error("Este lote ya tiene un reporte abierto.");
+          const mp = {
+            lote,
+            proveedor,
+            area,
+            piscina: "",
+            certificacion: "",
+            sabor: "",
+            olor: "",
+            color: "",
+            gramaje: "",
+            bom: "",
+            bof: "",
+            cargadas: "",
+          };
+          const id = await crearReporte(mp);
+          escribirLocal("nuevo-lote", {});
+          $("nuevo-lote").reset();
+          await abrirReporte(id, false);
+        });
+      };
+
       function escapar(texto) {
         return String(texto ?? "")
           .replaceAll("&", "&amp;")
@@ -1490,6 +2104,7 @@
         return r?.pendientes || [];
       }
       function mostrarPantalla(id) {
+        cerrarTeclado();
         for (const k of ["acceso", "resumen", "reporte"])
           $(k).hidden = k !== id;
       }
@@ -1500,6 +2115,7 @@
         try {
           if (!navigator.onLine)
             throw Error("Sin conexión. No se guardó ningún cambio.");
+          await sincronizar();
           await fn();
         } catch (e) {
           mensaje("OPERACIÓN NO COMPLETADA", errorTexto(e));
@@ -1518,7 +2134,11 @@
                 ? "CONSULTA"
                 : ocupado
                   ? "Guardando…"
-                  : "Guardado";
+                  : Object.keys(cambios).length
+                    ? navigator.onLine
+                      ? "Guardando…"
+                      : "Pendiente de conexión"
+                    : "Guardado";
         const bloquear = ocupado || lectura || actual?.estado === "cerrado";
         $("cerrar-reporte").disabled = bloquear || pendientes().length > 0;
         $("escanear").disabled =
@@ -1526,6 +2146,10 @@
         $("columnas")
           .querySelectorAll("input,select,button")
           .forEach((el) => (el.disabled = bloquear));
+        $("columnas").querySelectorAll("input").forEach(prepararEntrada);
+        $("columnas")
+          .querySelectorAll("button.foto.lista")
+          .forEach((el) => (el.disabled = ocupado));
         $("volver").disabled = ocupado;
       }
       async function cargarCatalogos() {
@@ -1560,12 +2184,18 @@
         if (salidaResumen) salidaResumen();
         if (salidaReporte) salidaReporte();
         pararCamara();
+        guardarRespaldo();
         usuario = u;
+        cambios = {};
         actual = null;
         if (!u) {
           mostrarPantalla("acceso");
           return;
         }
+        const lotePendiente = leerLocal("nuevo-lote", {});
+        $("lote-nuevo").value = lotePendiente.lote || "";
+        $("proveedor-nuevo").value = lotePendiente.proveedor || "";
+        $("area-nueva").value = lotePendiente.area || "";
         esAdmin = u.email?.toLowerCase() === ADMIN;
         mostrarPantalla("resumen");
         $("estado-resumen").textContent = "Cargando…";
@@ -1581,6 +2211,8 @@
             esAdmin || esJefe
               ? coleccion("reportes")
               : query(coleccion("reportes"), where("owner", "==", u.uid));
+          const retomar = leerLocal("ultimo", null);
+          if (retomar) await abrirReporte(retomar, false);
           salidaResumen = onSnapshot(
             q,
             (s) => {
@@ -1662,32 +2294,46 @@
       async function crearReporte(mp, numero = null) {
         const ref = doc(coleccion("reportes"));
         const contador = referencia("config", "contador");
-        await runTransaction(db, async (tx) => {
-          const c = await tx.get(contador);
-          const n = (c.exists() ? c.data().ultimo : 0) + 1;
-          tx.set(contador, { ultimo: n });
-          tx.set(ref, {
-            owner: usuario.uid,
-            inspector: usuario.email,
-            lote: mp.lote,
-            proveedor: mp.proveedor,
-            area: mp.area,
-            fecha: hoy(),
-            numero: n,
-            materia: { ...mp },
-            residual: residuales.find((x) => x.lote === mp.lote) || {},
-            muestras: [],
-            alertas: {},
-            pendientes: [],
-            revision: 0,
-            estado: "abierto",
-            eliminado: false,
-            creado: serverTimestamp(),
-            actualizado: serverTimestamp(),
-            ultima: { tipo: "crear" },
-          });
-        });
-        return ref.id;
+        for (let intento = 0; intento < 4; intento++) {
+          let anterior = null;
+          try {
+            await runTransaction(db, async (tx) => {
+              const c = await tx.get(contador);
+              anterior = c.exists() ? c.data().ultimo : 0;
+              const n = anterior + 1;
+              tx.set(contador, { ultimo: n });
+              tx.set(ref, {
+                owner: usuario.uid,
+                inspector: usuario.email,
+                lote: mp.lote,
+                proveedor: mp.proveedor,
+                area: mp.area,
+                fecha: hoy(),
+                numero: n,
+                materia: { ...mp },
+                residual: residuales.find((x) => x.lote === mp.lote) || {},
+                muestras: [],
+                alertas: {},
+                pendientes: [],
+                revision: 0,
+                estado: "abierto",
+                eliminado: false,
+                creado: serverTimestamp(),
+                actualizado: serverTimestamp(),
+                ultima: { tipo: "crear" },
+              });
+            });
+            return ref.id;
+          } catch (e) {
+            if (
+              intento === 3 ||
+              !["permission-denied", "aborted"].includes(e.code)
+            )
+              throw e;
+            const c = await getDocFromServer(contador);
+            if (!c.exists() || c.data().ultimo === anterior) throw e;
+          }
+        }
       }
       async function abrirReporte(id, soloLectura) {
         ordenMuestras = [];
@@ -1700,7 +2346,27 @@
         const r = await getDocFromServer(referencia("reportes", id));
         if (!r.exists()) throw Error("El reporte no existe.");
         actual = { id: r.id, ...r.data() };
+        const respaldo = leerLocal("reporte-" + id, {});
+        cambios =
+          actual.estado === "abierto" && !lectura ? respaldo.cambios || {} : {};
+        vacias = respaldo.vacias || [];
+        ordenMuestras = respaldo.orden || [];
+        inicioMuestras = respaldo.inicio || 0;
+        ultimoCampo =
+          respaldo.campo ||
+          (actual.ultima?.muestraId
+            ? {
+                muestra: actual.ultima.muestraId,
+                campo: actual.ultima.campo || "op",
+              }
+            : null);
+        escribirLocal("ultimo", id);
         mostrarPantalla("reporte");
+        if (!respaldo.orden && ultimoCampo) {
+          const lista = muestrasVisibles();
+          const indice = lista.findIndex((m) => m.id === ultimoCampo.muestra);
+          inicioMuestras = Math.max(0, indice - columnasPantalla() + 1);
+        }
         dibujarReporte();
         salidaReporte = onSnapshot(
           referencia("reportes", id),
@@ -1715,6 +2381,9 @@
           },
           (e) => mensaje("FIRESTORE", errorTexto(e)),
         );
+        if (Object.keys(cambios).length) programarGuardado();
+        if (ultimoCampo)
+          requestAnimationFrame(() => enfocarCampo(ultimoCampo, false));
       }
       function fila(label, contenido, boton = "", clase = "") {
         return (
@@ -1738,7 +2407,7 @@
           '" data-muestra="' +
           m.id +
           '" aria-label="' +
-          (bien ? "Reemplazar foto de " : "Fotografiar ") +
+          (bien ? "Ver foto de " : "Fotografiar ") +
           k +
           '">' +
           (bien ? "✓" : "←") +
@@ -1793,7 +2462,9 @@
           cabecera = op || opciones[0],
           v = valores(m);
         let s =
-          '<article class="muestra" data-id="' +
+          '<article class="muestra ' +
+          (iniciada(m) ? "iniciada" : "") +
+          '" data-id="' +
           m.id +
           '"><div class="muestra-titulo"><span>ANÁLISIS</span><strong>' +
           String(ordenMuestras.indexOf(m.id) + 1).padStart(2, "0") +
@@ -1931,20 +2602,38 @@
         vacias = vacias.filter(
           (m) => !actual.muestras.some((a) => a.id === m.id),
         );
-        const lista = [...actual.muestras, ...vacias];
-        while (lista.length < 3) {
-          const m = vacia();
-          vacias.push(m);
-          lista.push(m);
-        }
-        for (const m of lista)
-          if (!ordenMuestras.includes(m.id)) ordenMuestras.push(m.id);
-        return lista.sort(
-          (a, b) => ordenMuestras.indexOf(a.id) - ordenMuestras.indexOf(b.id),
+        const todas = [...actual.muestras, ...vacias].map(
+          (m) => cambios[m.id]?.m || m,
         );
+        const lista = [];
+        for (const [i, m] of todas.entries()) {
+          const indice = m.posicion
+            ? m.posicion - 1
+            : ordenMuestras.includes(m.id)
+              ? ordenMuestras.indexOf(m.id)
+              : i;
+          if (!lista[indice]) lista[indice] = m;
+          else lista.push(m);
+        }
+        const total = Math.max(3, lista.length);
+        for (let i = 0; i < total; i++)
+          if (!lista[i]) {
+            const m = vacia();
+            m.posicion = i + 1;
+            vacias.push(m);
+            lista[i] = m;
+          }
+        ordenMuestras = lista.map((m) => m.id);
+        return lista;
       }
       function dibujarReporte() {
         if (!actual) return;
+        const foco = document.activeElement?.dataset.campo
+          ? identidadCampo(document.activeElement)
+          : null;
+        const seleccion = document.activeElement?.selectionStart;
+        const textoFoco = document.activeElement?.value;
+        const tecladoVisible = !$("teclado").hidden;
         $("identidad-reporte").textContent =
           "Lote " + actual.lote + " / Reporte " + actual.numero;
         $("nombre-proveedor").textContent =
@@ -1959,10 +2648,12 @@
           muestras.length,
           inicioMuestras + columnasPantalla(),
         );
+        restaurandoFoco = true;
         $("columnas").innerHTML = muestras
           .slice(inicioMuestras, fin)
           .map(dibujarMuestra)
           .join("");
+        restaurandoFoco = false;
         $("rango-muestras").textContent =
           "ANÁLISIS " +
           (inicioMuestras + 1) +
@@ -1986,9 +2677,9 @@
           ["GR PROMEDIO", formato(mp.gramaje)],
           ["SO2 RECEPCION", rs.recepcion],
           ["SO2 TOLVA", rs.tolva],
-          ["B.O. M", mp.bom + "%"],
-          ["B.O. F", mp.bof + "%"],
-          ["C. CARGADAS", mp.cargadas + "%"],
+          ["B.O. M", mp.bom === "" ? "" : mp.bom + "%"],
+          ["B.O. F", mp.bof === "" ? "" : mp.bof + "%"],
+          ["C. CARGADAS", mp.cargadas === "" ? "" : mp.cargadas + "%"],
         ]
           .map(
             ([l, v]) =>
@@ -2033,9 +2724,23 @@
                 : "Guardado";
 
         actualizarBotones();
+        if (foco) {
+          enfocarCampo(foco, tecladoVisible, seleccion);
+          if (
+            document.activeElement?.tagName === "INPUT" &&
+            document.activeElement.dataset.muestra === foco.muestra
+          ) {
+            document.activeElement.value = textoFoco;
+            try {
+              document.activeElement.setSelectionRange(seleccion, seleccion);
+            } catch {}
+          }
+        }
+        guardarRespaldo();
       }
       function muestraPorId(id) {
         return (
+          cambios[id]?.m ||
           actual.muestras.find((m) => m.id === id) ||
           vacias.find((m) => m?.id === id)
         );
@@ -2053,7 +2758,7 @@
             muestraId: m.id,
             valor: String(valor),
           });
-        if (!op.sabores.includes(r.materia.sabor))
+        if (r.materia.sabor && !op.sabores.includes(r.materia.sabor))
           agregar("sabor", "NO ACEPTA SABOR", r.materia.sabor);
         if (!op.colores.includes(m.color))
           agregar("color", "NO ACEPTA " + m.color, m.color);
@@ -2128,13 +2833,14 @@
             "Buenos + defectos debe coincidir con el total de piezas. Cada pieza se clasifica una sola vez en este ejercicio.",
           );
       }
-      async function guardarMuestra(m, fotoDoc = null) {
-        validarMuestra(m);
+      async function guardarMuestra(m, fotoDoc = null, finalizar = true) {
+        if (fotoDoc) validarMuestra(m);
         const revision = actual.revision,
           id = actual.id;
         m.hora ||= hora();
+        m.posicion ||= ordenMuestras.indexOf(m.id) + 1;
         const nuevas = await Promise.all(
-          evaluar(m).map(async (a) => ({
+          (finalizar ? evaluar(m) : []).map(async (a) => ({
             ...a,
             id: (await huella(JSON.stringify(a))).slice(0, 32),
           })),
@@ -2173,55 +2879,27 @@
             pendientes: pend,
             revision: r.revision + 1,
             actualizado: serverTimestamp(),
-            ultima: { tipo: "editar" },
+            ultima: {
+              tipo: "editar",
+              muestraId: m.id,
+              campo: ultimoCampo?.muestra === m.id ? ultimoCampo.campo : "op",
+            },
           });
         });
         const confirmado = await getDocFromServer(referencia("reportes", id));
         actual = { id, ...confirmado.data() };
         dibujarReporte();
       }
-      $("columnas").addEventListener("change", (e) => {
-        const el = e.target;
-        if (!el.dataset.campo || lectura) return;
-        accion(async () => {
-          const m = structuredClone(muestraPorId(el.dataset.muestra)),
-            k = el.dataset.campo;
-          if (k === "op") {
-            const numero = el.value.trim();
-            const encontrados = await consultarOP(numero);
-            if (numero !== (m.op || ordenMuestra(m)?.op || "")) {
-              m.codigo = "";
-              m.fotos = {};
-            }
-            m.op = numero;
-            if (m.codigo && !encontrados.some((o) => o.codigo === m.codigo))
-              m.codigo = "";
-            await guardarMuestra(m);
-            return;
-          }
-          if (k === "codigo") {
-            m.op ||= ordenMuestra(m)?.op || "";
-            if (!ordenes.some((o) => o.op === m.op && o.codigo === el.value))
-              throw Error("Seleccione un código de la OP ingresada.");
-            if (m.codigo !== el.value) m.fotos = {};
-          }
-          m[k] = ["codigo", "color"].includes(k)
-            ? el.value
-            : el.value === ""
-              ? ""
-              : Number(el.value);
-          await guardarMuestra(m);
-        });
-      });
-      $("columnas").addEventListener("keydown", (e) => {
-        if (e.key === "Enter" && e.target.dataset.campo === "op") {
-          e.preventDefault();
-          e.target.blur();
-        }
-      });
+      $("columnas").addEventListener("input", (e) =>
+        registrarEntrada(e.target, false),
+      );
+      $("columnas").addEventListener("change", (e) =>
+        registrarEntrada(e.target, true),
+      );
       $("columnas").addEventListener("click", (e) => {
         const b = e.target.closest("button");
-        if (!b || lectura || ocupado) return;
+        if (!b || ocupado) return;
+        if (lectura && !b.classList.contains("lista")) return;
         if (b.dataset.foto) {
           const m = muestraPorId(b.dataset.muestra);
           if (
@@ -2236,7 +2914,22 @@
             return;
           }
           objetivoFoto = { muestraId: m.id, campo: b.dataset.foto };
-          abrirCamara("foto");
+          cerrarTeclado();
+          if (tieneFoto(m, b.dataset.foto)) {
+            accion(async () => {
+              const f = await getDocFromServer(
+                doc(
+                  referencia("reportes", actual.id),
+                  "fotos",
+                  m.fotos[b.dataset.foto].id,
+                ),
+              );
+              if (!f.exists()) throw Error("No se encontró la fotografía.");
+              $("imagen-guardada").src = f.data().imagen;
+              $("nueva-foto").hidden = lectura || actual.estado !== "abierto";
+              $("foto-guardada").showModal();
+            });
+          } else accion(() => abrirCamara("foto"));
         }
         if (b.dataset.nuevo) {
           const lista = muestrasVisibles();
@@ -2506,7 +3199,8 @@
         accion(async () => {
           if (!actual.muestras.length)
             throw Error("No hay muestras ingresadas.");
-          for (const m of actual.muestras) {
+          for (const m of [...actual.muestras]) {
+            await guardarMuestra(m);
             validarMuestra(m, true);
             if (camposFoto.some((k) => !tieneFoto(m, k)))
               throw Error("Faltan fotografías confirmadas en una muestra.");
@@ -2540,6 +3234,10 @@
           volver();
         });
       function volver() {
+        cerrarTeclado();
+        guardarRespaldo();
+        escribirLocal("ultimo", null);
+        cambios = {};
         if (salidaReporte) salidaReporte();
         salidaReporte = null;
         actual = null;
@@ -2549,7 +3247,7 @@
         dibujarResumen();
       }
       $("volver").onclick = () => {
-        if (!ocupado) volver();
+        accion(async () => volver());
       };
       $("salir").onclick = () =>
         accion(async () => {
