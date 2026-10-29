@@ -107,6 +107,8 @@
         pointer-events: none;
       }
       .logo {
+        position: relative;
+        z-index: 1;
         background: white;
         padding: 12px 16px;
         width: 205px;
@@ -1366,6 +1368,45 @@
           height: 24px;
         }
       }
+      @media (max-width: 649px) {
+        #acceso input {
+          font-size: 16px;
+          min-height: 42px;
+        }
+        #acceso {
+          max-width: 100%;
+        }
+        .panel-resumen {
+          min-width: 0;
+        }
+        .tabla-scroll {
+          max-width: 100%;
+          overscroll-behavior-x: contain;
+        }
+        .utilidades {
+          flex-wrap: wrap;
+          gap: 8px;
+        }
+        #nuevo-lote {
+          grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        }
+        dialog {
+          max-width: calc(100vw - 20px);
+          max-height: calc(100dvh - 20px);
+          overflow: auto;
+        }
+      }
+      @media (max-width: 359px) {
+        #nuevo-lote {
+          grid-template-columns: minmax(0, 1fr);
+        }
+        .metricas > div {
+          padding: 10px 8px;
+        }
+        #reporte .reporte-titulo > span {
+          display: none;
+        }
+      }
     </style>
   </head>
   <body>
@@ -1379,7 +1420,10 @@
         />
         <div class="marca-titulo">
           <span class="eyebrow">GESTIÓN DE CALIDAD</span>
-          <h1>Control<br />de empaque<span>.</span></h1>
+          <h1>
+            Control<br />
+            de empaque<span>.</span>
+          </h1>
           <div class="marca-linea"></div>
           <p>EXPALSA · OPERACIONES</p>
         </div>
@@ -1393,6 +1437,9 @@
           ><input
             id="correo"
             type="email"
+            inputmode="email"
+            autocapitalize="none"
+            spellcheck="false"
             autocomplete="username"
             value="jefferson@expalsaevaluations.com"
             required
@@ -1401,6 +1448,8 @@
           ><input
             id="clave"
             type="password"
+            inputmode="text"
+            autocapitalize="none"
             autocomplete="current-password"
             required
           />
@@ -1687,16 +1736,32 @@
         ["deterioro", "DETERIORO"],
         ["deforme", "DEFORME"],
       ];
-      const camposFoto = [
-        "bruto",
-        "neto",
-        "piezas",
-        "cuenta",
-        "grandes",
-        "pequenos",
-        ...defectos.map((x) => x[0]),
-        "defectos",
-      ];
+      function defectosMuestra(m) {
+        if (m.estatus !== "entero") return defectos;
+        return [
+          "estropeadas",
+          "flojas",
+          "rojas",
+          "anaranjadas",
+          "mudado",
+          "blando",
+          "picado",
+          "atb",
+          "deforme",
+        ].map((k) => defectos.find((d) => d[0] === k));
+      }
+      function fotosMuestra(m) {
+        return [
+          "bruto",
+          "neto",
+          "piezas",
+          "cuenta",
+          "grandes",
+          "pequenos",
+          ...defectosMuestra(m).map((d) => d[0]),
+          "defectos",
+        ];
+      }
       let usuario = null,
         esAdmin = false,
         esJefe = false,
@@ -1801,11 +1866,12 @@
           m.fotos = {};
           if (k === "op") m.codigo = "";
         }
-        m[k] = ["op", "codigo", "color"].includes(k)
+        m[k] = ["op", "codigo", "color", "estatus"].includes(k)
           ? el.value
           : el.value === ""
             ? ""
             : Number(el.value);
+        if (k === "estatus") delete m.fotos.defectos;
         cambios[m.id] = {
           m,
           finalizar,
@@ -1818,6 +1884,7 @@
           ? "Guardando…"
           : "Pendiente de conexión";
         programarGuardado();
+        if (k === "estatus") dibujarReporte();
       }
       async function sincronizar() {
         clearTimeout(temporizador);
@@ -1911,7 +1978,11 @@
           lista.scrollTop += fila.bottom - caja.bottom;
         else if (fila.top < caja.top) lista.scrollTop -= caja.top - fila.top;
       }
+      function entradaNativa(el) {
+        return el.id === "correo" || el.id === "clave";
+      }
       function prepararEntrada(el) {
+        if (entradaNativa(el)) return;
         if (["checkbox", "radio", "file", "submit", "button"].includes(el.type))
           return;
         if (el.type === "number") {
@@ -2050,7 +2121,7 @@
       }
       document.addEventListener("focusin", (e) => {
         const el = e.target;
-        if (el.tagName === "SELECT") {
+        if (entradaNativa(el) || el.tagName === "SELECT") {
           cerrarTeclado();
           return;
         }
@@ -2093,6 +2164,7 @@
       document.addEventListener("click", (e) => {
         if (
           e.target.tagName === "INPUT" &&
+          !entradaNativa(e.target) &&
           !e.target.disabled &&
           $("teclado").hidden
         )
@@ -2283,7 +2355,7 @@
       function valores(m) {
         const piezas = Number(m.piezas) || 0;
         let malos = 0;
-        for (const [k] of defectos)
+        for (const [k] of defectosMuestra(m))
           if (k !== "buenos") malos += Number(m[k]) || 0;
         return {
           cuenta:
@@ -2313,6 +2385,7 @@
           op: "",
           codigo: "",
           color: "A3",
+          estatus: "",
           bruto: "",
           neto: "",
           piezas: "",
@@ -2761,6 +2834,28 @@
             "</select>",
         );
         s += fila(
+          "ESTATUS",
+          '<select aria-label="Estatus" data-campo="estatus" data-muestra="' +
+            m.id +
+            '"><option value="">Seleccionar</option>' +
+            [
+              ["entero", "Entero"],
+              ["cola", "Cola"],
+            ]
+              .map(
+                ([v, l]) =>
+                  '<option value="' +
+                  v +
+                  '" ' +
+                  (m.estatus === v ? "selected" : "") +
+                  ">" +
+                  l +
+                  "</option>",
+              )
+              .join("") +
+            "</select>",
+        );
+        s += fila(
           "ESTRUCTURA",
           '<span class="dato gris">' + escapar(actual.area) + "</span>",
         );
@@ -2793,7 +2888,7 @@
           '<span class="dato gris">' + formato(v.uniformidad) + "</span>",
         );
         s += '<div class="porcentajes">';
-        for (const [k, l] of defectos) {
+        for (const [k, l] of defectosMuestra(m)) {
           const porcentaje =
             m[k] !== "" && Number(m.piezas) > 0
               ? formato((Number(m[k]) / Number(m.piezas)) * 100) + "%"
@@ -3027,7 +3122,7 @@
           "piezas",
           "grandes",
           "pequenos",
-          ...defectos.map((x) => x[0]),
+          ...defectosMuestra(m).map((x) => x[0]),
         ]) {
           if (m[k] === "") {
             if (completa) throw Error("Complete " + k + " en la muestra.");
@@ -3036,7 +3131,7 @@
           if (!Number.isFinite(Number(m[k])) || Number(m[k]) < 0)
             throw Error("Valor inválido: " + k);
           if (
-            ["piezas", ...defectos.map((x) => x[0])].includes(k) &&
+            ["piezas", ...defectosMuestra(m).map((x) => x[0])].includes(k) &&
             !Number.isInteger(Number(m[k]))
           )
             throw Error("Las piezas deben ser números enteros.");
@@ -3063,11 +3158,18 @@
           );
         if (
           m.piezas !== "" &&
-          defectos.some(([k]) => Number(m[k]) > Number(m.piezas))
+          defectosMuestra(m).some(([k]) => Number(m[k]) > Number(m.piezas))
         )
           throw Error("Un conteo de defectos no puede superar la muestra.");
         if (
+          m.estatus === "entero" &&
+          m.piezas !== "" &&
+          valores(m).defectos > Number(m.piezas)
+        )
+          throw Error("Los defectos no pueden superar el total de piezas.");
+        if (
           completa &&
+          m.estatus !== "entero" &&
           Number(m.buenos) + valores(m).defectos !== Number(m.piezas)
         )
           throw Error(
@@ -3131,9 +3233,9 @@
         actual = { id, ...confirmado.data() };
         dibujarReporte();
       }
-      $("columnas").addEventListener("input", (e) =>
-        registrarEntrada(e.target, false),
-      );
+      $("columnas").addEventListener("input", (e) => {
+        if (e.target.tagName !== "SELECT") registrarEntrada(e.target, false);
+      });
       $("columnas").addEventListener("change", (e) =>
         registrarEntrada(e.target, true),
       );
@@ -3443,7 +3545,7 @@
           for (const m of [...actual.muestras]) {
             await guardarMuestra(m);
             validarMuestra(m, true);
-            if (camposFoto.some((k) => !tieneFoto(m, k)))
+            if (fotosMuestra(m).some((k) => !tieneFoto(m, k)))
               throw Error("Faltan fotografías confirmadas en una muestra.");
           }
           if (pendientes().length) throw Error("Existen alertas pendientes.");
