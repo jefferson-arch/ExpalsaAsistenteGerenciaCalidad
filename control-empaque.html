@@ -1407,6 +1407,171 @@
           display: none;
         }
       }
+      .datos-analisis {
+        flex-shrink: 0;
+        min-width: 0;
+      }
+      #teclado {
+        max-height: calc(100dvh - 8px);
+        overflow-y: auto;
+        overscroll-behavior: contain;
+      }
+      @media screen and (orientation: landscape) and (max-height: 600px) {
+        #teclado {
+          max-height: calc(100dvh - 78px);
+        }
+        #teclado button {
+          height: 29px;
+          font-size: 13px;
+        }
+        #reporte .cabecera {
+          height: 44px;
+        }
+        #reporte .logo-cabecera {
+          width: 95px;
+          height: 29px;
+        }
+        #reporte .identidad > div {
+          display: none;
+        }
+        #hoja {
+          height: calc(100dvh - 44px);
+          grid-template-columns: minmax(0, 1fr);
+          position: relative;
+          padding: 2px 8px 6px;
+        }
+        .barra {
+          height: 26px;
+          flex-basis: 26px;
+          margin-bottom: 3px;
+          gap: 8px;
+        }
+        #ver-lote {
+          display: block;
+          width: auto;
+          padding: 0 10px;
+          font-size: 10px;
+        }
+        #rango-muestras {
+          flex: 1;
+          text-align: center;
+        }
+        .columnas,
+        body.teclado-abierto #reporte .columnas {
+          grid-template-columns: minmax(0, 1fr);
+          width: 100%;
+        }
+        .muestra {
+          display: grid;
+          grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+          grid-template-rows: 24px minmax(0, 1fr) 27px;
+          column-gap: 12px;
+          row-gap: 2px;
+          padding: 0 8px 4px;
+          font-size: 12px;
+          --alto-fila: clamp(18px, 6dvh, 26px);
+        }
+        .muestra-titulo {
+          grid-column: 1 / -1;
+          height: 24px;
+          margin: 0;
+        }
+        .datos-analisis {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          grid-template-rows: repeat(9, var(--alto-fila));
+          grid-auto-flow: column;
+          gap: 0 10px;
+          overflow-y: auto;
+          min-height: 0;
+          overscroll-behavior: contain;
+          scrollbar-width: thin;
+        }
+        .datos-analisis .fila {
+          height: var(--alto-fila);
+        }
+        .datos-analisis .fila > label {
+          white-space: normal;
+          font-size: 0.9em;
+        }
+        .muestra .porcentajes {
+          grid-column: 2;
+          grid-row: 2;
+          margin: 0;
+          padding: 0;
+          border: 0;
+          --alto-fila: 28px;
+        }
+        .muestra .total {
+          grid-column: 2;
+          grid-row: 3;
+          height: 25px;
+          margin: 0;
+        }
+        .muestra .nuevo {
+          grid-column: 1;
+          grid-row: 3;
+          height: 25px;
+          margin: 0;
+        }
+        #hoja > .lateral {
+          display: none;
+        }
+        #hoja.ver-lateral .ventana-muestras {
+          visibility: hidden;
+        }
+        #hoja.ver-lateral > .lateral {
+          display: grid;
+          position: absolute;
+          inset: 31px 8px 6px;
+          z-index: 5;
+          background: #f3f6f7;
+          padding: 0;
+          gap: 4px 12px;
+          grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+          grid-template-rows: 22px minmax(0, 1fr) 24px 35px 28px;
+          font-size: 12px;
+        }
+        #hoja.ver-lateral .datos-lote {
+          grid-column: 1;
+          grid-row: 1 / 6;
+          min-height: 0;
+          overflow-y: auto;
+        }
+        #hoja.ver-lateral .lote-datos td {
+          height: 20px;
+        }
+        #hoja.ver-lateral .titulo-alertas {
+          grid-column: 2;
+          grid-row: 1;
+          margin: 0;
+        }
+        #hoja.ver-lateral .alertas-wrap {
+          grid-column: 2;
+          grid-row: 2;
+          height: 100%;
+          min-height: 0;
+          overflow-y: auto;
+        }
+        #hoja.ver-lateral .nav-alertas {
+          grid-column: 2;
+          grid-row: 3;
+        }
+        #hoja.ver-lateral .acciones-reporte {
+          grid-column: 2;
+          grid-row: 4;
+          margin-top: 0;
+        }
+        #hoja.ver-lateral .acciones-reporte button {
+          min-height: 0;
+          padding: 2px;
+          font-size: 11px;
+        }
+        #hoja.ver-lateral .inferior {
+          grid-column: 2;
+          grid-row: 5;
+        }
+      }
     </style>
   </head>
   <body>
@@ -1970,7 +2135,7 @@
         restaurandoFoco = false;
       }
       function mostrarFila(el) {
-        const lista = el.closest(".porcentajes");
+        const lista = el.closest(".porcentajes, .datos-analisis");
         if (!lista) return;
         const fila = el.closest(".fila").getBoundingClientRect(),
           caja = lista.getBoundingClientRect();
@@ -2047,7 +2212,14 @@
                 x.getBoundingClientRect().left >
                 columna.getBoundingClientRect().left,
             ) || otras.at(-1);
-          if (innerWidth < 650) {
+          if (horizontalCompacto()) {
+            const destino = campoTeclado.closest(".datos-analisis")
+              ? columna.querySelector(".porcentajes")
+              : columna.querySelector(".datos-analisis");
+            const r = destino.getBoundingClientRect();
+            ancho = Math.min(280, r.width - 8);
+            izquierda = r.left + 4;
+          } else if (innerWidth < 650) {
             ancho = Math.floor(innerWidth * 0.42);
             izquierda = innerWidth - ancho - 6;
           } else if (!vecino) {
@@ -2078,6 +2250,12 @@
             r.bottom + panel.offsetHeight + 8 < innerHeight
               ? r.bottom + 8
               : Math.max(4, r.top - panel.offsetHeight - 8);
+        if (horizontalCompacto() && columna)
+          arriba = Math.max(
+            $("reporte").querySelector(".barra").getBoundingClientRect()
+              .bottom + 3,
+            arriba,
+          );
         panel.style.top = arriba + "px";
       }
       function editarConTeclado(letra, borrar = false) {
@@ -2770,7 +2948,7 @@
           m.id +
           '"><div class="muestra-titulo"><span>ANÁLISIS</span><strong>' +
           String(ordenMuestras.indexOf(m.id) + 1).padStart(2, "0") +
-          "</strong></div>";
+          '</strong></div><div class="datos-analisis">';
         s += fila("HORA", '<span class="dato gris">' + m.hora + "</span>");
         s += fila("LOTE", '<span class="dato gris">' + actual.lote + "</span>");
         s += fila(
@@ -2887,7 +3065,7 @@
           "UNIFORMIDAD",
           '<span class="dato gris">' + formato(v.uniformidad) + "</span>",
         );
-        s += '<div class="porcentajes">';
+        s += '</div><div class="porcentajes">';
         for (const [k, l] of defectosMuestra(m)) {
           const porcentaje =
             m[k] !== "" && Number(m.piezas) > 0
@@ -2919,7 +3097,12 @@
       let vacias = [],
         inicioMuestras = 0,
         ordenMuestras = [];
+      function horizontalCompacto() {
+        return matchMedia("(orientation: landscape) and (max-height: 600px)")
+          .matches;
+      }
       function columnasPantalla() {
+        if (horizontalCompacto()) return 1;
         return innerWidth < 900 ? 1 : innerWidth < 1100 ? 2 : 3;
       }
       function muestrasVisibles() {
@@ -2960,7 +3143,10 @@
         const desplazamientos = new Map(
           [...$("columnas").querySelectorAll(".muestra")].map((el) => [
             el.dataset.id,
-            el.querySelector(".porcentajes").scrollTop,
+            {
+              defectos: el.querySelector(".porcentajes").scrollTop,
+              datos: el.querySelector(".datos-analisis").scrollTop,
+            },
           ]),
         );
         const tecladoVisible = !$("teclado").hidden;
@@ -2988,7 +3174,9 @@
           .querySelectorAll(".muestra")
           .forEach((el) => {
             el.querySelector(".porcentajes").scrollTop =
-              desplazamientos.get(el.dataset.id) || 0;
+              desplazamientos.get(el.dataset.id)?.defectos || 0;
+            el.querySelector(".datos-analisis").scrollTop =
+              desplazamientos.get(el.dataset.id)?.datos || 0;
           });
         $("rango-muestras").textContent =
           "ANÁLISIS " +
