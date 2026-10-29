@@ -1190,8 +1190,9 @@
           height: 100%;
           min-height: 0;
           overflow: hidden;
-          font-size: clamp(13px, 1.15vw, 17px);
-          --alto-fila: clamp(20px, 3.4dvh, 38px);
+          font-size: clamp(12px, 1.05vw, 16px);
+          border-radius: 12px;
+          --alto-fila: clamp(20px, 2.7dvh, 29px);
         }
         .muestra-titulo {
           flex-shrink: 0;
@@ -1215,7 +1216,7 @@
           touch-action: pan-y;
           scrollbar-gutter: stable;
           scrollbar-width: thin;
-          --alto-fila: clamp(32px, 4.4dvh, 46px);
+          --alto-fila: clamp(28px, 3.6dvh, 36px);
         }
         .muestra .porcentajes .fila > label {
           white-space: normal;
@@ -1240,10 +1241,129 @@
       @media screen and (max-width: 649px) {
         .muestra {
           font-size: clamp(10px, 2.65vw, 14px);
-          --alto-fila: clamp(19px, 3.4dvh, 32px);
+          --alto-fila: clamp(18px, 2.7dvh, 27px);
         }
         .muestra .fila > label {
           white-space: normal;
+        }
+      }
+      @media screen {
+        #reporte .cabecera {
+          height: 54px;
+          gap: 24px;
+        }
+        #reporte .reporte-titulo {
+          flex: 1;
+          min-width: 0;
+          height: auto;
+          padding: 0;
+          gap: 12px;
+        }
+        #reporte .reporte-titulo > div {
+          display: grid;
+          gap: 3px;
+        }
+        #reporte .reporte-titulo .eyebrow {
+          font-size: 9px;
+        }
+        #reporte .reporte-titulo > span {
+          max-width: 240px;
+          text-align: right;
+        }
+        #hoja {
+          height: calc(100dvh - 54px);
+          padding-top: 4px;
+        }
+      }
+      @media screen and (max-width: 649px) {
+        #reporte .cabecera {
+          gap: 12px;
+        }
+        #reporte .identidad > div,
+        #reporte .identidad .separador {
+          display: none;
+        }
+        #reporte .logo-cabecera {
+          width: 80px;
+        }
+        #reporte .reporte-titulo > span {
+          max-width: 100px;
+        }
+      }
+      #ver-lote {
+        display: none;
+      }
+      @media screen and (min-width: 650px) and (max-width: 899px) {
+        #hoja {
+          grid-template-columns: minmax(0, 60%) minmax(0, 40%);
+        }
+        .columnas {
+          grid-template-columns: minmax(0, 1fr);
+        }
+      }
+      @media screen and (max-width: 649px) {
+        #hoja {
+          position: relative;
+          grid-template-columns: minmax(0, 1fr);
+        }
+        #ver-lote {
+          display: block;
+          width: auto;
+          padding: 0 8px;
+          font-size: 9px;
+        }
+        .barra {
+          gap: 6px;
+        }
+        #rango-muestras {
+          flex: 1;
+          text-align: center;
+          font-size: 9px;
+          letter-spacing: 0;
+        }
+        #hoja > .lateral {
+          display: none;
+        }
+        #hoja.ver-lateral > .lateral {
+          display: flex;
+          position: absolute;
+          inset: 37px 7px 8px;
+          background: #f3f6f7;
+          z-index: 5;
+          padding: 8px;
+          font-size: 13px;
+        }
+        #hoja.ver-lateral .ventana-muestras {
+          visibility: hidden;
+        }
+        #hoja.ver-lateral .datos-lote h2,
+        #hoja.ver-lateral .titulo-alertas h2 {
+          font-size: 14px;
+        }
+        #hoja.ver-lateral .acciones-reporte button {
+          font-size: 12px;
+        }
+        .muestra {
+          font-size: clamp(12px, 3.3vw, 15px);
+        }
+        body.teclado-abierto .muestra {
+          font-size: clamp(10px, 2.6vw, 13px);
+        }
+      }
+      @media screen and (max-height: 620px) {
+        .muestra {
+          --alto-fila: 18px;
+          font-size: 12px;
+        }
+        .muestra .porcentajes {
+          --alto-fila: 28px;
+        }
+        .muestra-titulo {
+          height: 23px;
+          margin-bottom: 2px;
+        }
+        .muestra .nuevo {
+          height: 24px;
         }
       }
     </style>
@@ -1384,21 +1504,21 @@
             ><strong>Control de empaque</strong>
           </div>
         </div>
-        <span class="cabecera-etiqueta">EXPALSA / OPERACIONES</span>
-      </header>
-      <div class="reporte-titulo">
-        <div>
-          <span class="eyebrow">REPORTE DE EMPAQUE</span
-          ><strong id="identidad-reporte"></strong>
+        <div class="reporte-titulo">
+          <div>
+            <span class="eyebrow">REPORTE DE EMPAQUE</span
+            ><strong id="identidad-reporte"></strong>
+          </div>
+          <span id="nombre-proveedor"></span>
         </div>
-        <span id="nombre-proveedor"></span>
-      </div>
+      </header>
       <div id="hoja">
         <div class="lado-muestras">
           <div class="barra">
             <button id="anterior" aria-label="Muestra anterior">◁</button
             ><span id="rango-muestras"></span
-            ><button id="siguiente" aria-label="Muestra siguiente">▷</button>
+            ><button id="siguiente" aria-label="Muestra siguiente">▷</button
+            ><button id="ver-lote" aria-expanded="false">LOTE / ALERTAS</button>
           </div>
           <div class="ventana-muestras" id="ventana">
             <div class="columnas" id="columnas"></div>
@@ -1856,9 +1976,12 @@
                 x.getBoundingClientRect().left >
                 columna.getBoundingClientRect().left,
             ) || otras.at(-1);
-          if (innerWidth < 650 || !vecino) {
+          if (innerWidth < 650) {
             ancho = Math.floor(innerWidth * 0.42);
             izquierda = innerWidth - ancho - 6;
+          } else if (!vecino) {
+            izquierda = columna.getBoundingClientRect().right + 6;
+            ancho = Math.min(280, innerWidth - izquierda - 6);
           } else {
             const r = vecino.getBoundingClientRect();
             ancho = Math.min(280, r.width - 4);
@@ -2203,6 +2326,12 @@
       function pendientes(r = actual) {
         return r?.pendientes || [];
       }
+      $("ver-lote").onclick = () => {
+        cerrarTeclado();
+        const abierto = $("hoja").classList.toggle("ver-lateral");
+        $("ver-lote").setAttribute("aria-expanded", String(abierto));
+        $("ver-lote").textContent = abierto ? "VER ANÁLISIS" : "LOTE / ALERTAS";
+      };
       function mostrarPantalla(id) {
         cerrarTeclado();
         for (const k of ["acceso", "resumen", "reporte"])
@@ -2696,7 +2825,7 @@
         inicioMuestras = 0,
         ordenMuestras = [];
       function columnasPantalla() {
-        return innerWidth < 650 ? 1 : innerWidth < 1100 ? 2 : 3;
+        return innerWidth < 900 ? 1 : innerWidth < 1100 ? 2 : 3;
       }
       function muestrasVisibles() {
         vacias = vacias.filter(
