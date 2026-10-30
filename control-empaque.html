@@ -1642,6 +1642,142 @@
         grid-row: 1;
         width: 100%;
       }
+      @media screen {
+        #reporte .cabecera {
+          height: 64px;
+          padding: 6px 18px;
+          gap: 16px;
+        }
+        .nombre-inspector {
+          font-size: 13px;
+          font-weight: 600;
+          color: var(--ink);
+          white-space: normal;
+          overflow-wrap: anywhere;
+        }
+        #reporte .reporte-titulo > .nombre-inspector {
+          max-width: 320px;
+          text-align: center;
+        }
+        #hoja {
+          height: calc(100dvh - 64px);
+          grid-template-rows: minmax(0, 1fr);
+          gap: 10px;
+          padding: 4px 10px 8px;
+          min-height: 0;
+        }
+        .lado-muestras {
+          position: relative;
+          padding: 0 22px;
+          height: 100%;
+          min-height: 0;
+        }
+        .barra {
+          position: absolute;
+          inset: 0;
+          height: auto;
+          margin: 0;
+          display: block;
+          pointer-events: none;
+          z-index: 4;
+        }
+        .barra button {
+          position: absolute;
+          top: 50%;
+          transform: translateY(-50%);
+          width: 21px;
+          height: 48px;
+          padding: 0;
+          pointer-events: auto;
+          border: 0;
+          border-radius: 6px;
+        }
+        #anterior {
+          left: 0;
+        }
+        #siguiente {
+          right: 0;
+        }
+        .ventana-muestras {
+          height: 100%;
+          flex: 1;
+        }
+        #hoja > .lateral {
+          min-height: 0;
+          height: 100%;
+          padding-top: 0;
+          overflow: hidden;
+        }
+        .datos-lote {
+          flex: 0 1 auto;
+          max-height: calc(100% - 205px);
+        }
+        .titulo-alertas {
+          margin: 8px 0 5px;
+          padding: 0;
+          flex-shrink: 0;
+        }
+        .alertas-wrap {
+          flex: 1;
+          height: auto;
+          min-height: 65px;
+          overflow: auto;
+        }
+        .nav-alertas,
+        .acciones-reporte,
+        .inferior {
+          flex-shrink: 0;
+        }
+        .muestra {
+          --alto-fila: clamp(19px, 2.5dvh, 26px);
+        }
+        #hoja.ver-lateral > .lateral {
+          inset: 4px 8px 8px;
+          height: auto;
+          padding: 0;
+        }
+      }
+      @media screen and (max-width: 899px) {
+        #reporte .identidad > div,
+        #reporte .identidad .separador,
+        #nombre-proveedor {
+          display: none;
+        }
+        #reporte .cabecera {
+          gap: 8px;
+          padding: 4px 8px;
+        }
+        #reporte .reporte-titulo {
+          gap: 3px;
+          flex-wrap: wrap;
+        }
+        #reporte .reporte-titulo > .nombre-inspector {
+          text-align: left;
+          font-size: 11px;
+          max-width: 100%;
+        }
+        #ver-lote {
+          flex-shrink: 0;
+          min-height: 28px;
+        }
+      }
+      @media screen and (orientation: landscape) and (max-height: 600px) {
+        #reporte .cabecera {
+          height: 52px;
+        }
+        #hoja {
+          height: calc(100dvh - 52px);
+        }
+        .muestra {
+          --alto-fila: clamp(18px, 6dvh, 26px);
+        }
+        #hoja.ver-lateral .datos-lote {
+          max-height: none;
+        }
+        #hoja.ver-lateral > .lateral {
+          display: grid;
+        }
+      }
     </style>
   </head>
   <body>
@@ -1704,7 +1840,7 @@
             ><strong>Control de empaque</strong>
           </div>
         </div>
-        <span class="cabecera-etiqueta">EXPALSA / OPERACIONES</span>
+        <span class="nombre-inspector" data-nombre-inspector></span>
       </header>
       <main class="panel-resumen">
         <div class="titulo-pagina">
@@ -1797,16 +1933,16 @@
             <span class="eyebrow">REPORTE DE EMPAQUE</span
             ><strong id="identidad-reporte"></strong>
           </div>
+          <span class="nombre-inspector" data-nombre-inspector></span>
           <span id="nombre-proveedor"></span>
         </div>
+        <button id="ver-lote" aria-expanded="false">LOTE / ALERTAS</button>
       </header>
       <div id="hoja">
         <div class="lado-muestras">
           <div class="barra">
-            <button id="anterior" aria-label="Muestra anterior">◁</button
-            ><span id="rango-muestras"></span
-            ><button id="siguiente" aria-label="Muestra siguiente">▷</button
-            ><button id="ver-lote" aria-expanded="false">LOTE / ALERTAS</button>
+            <button id="anterior" aria-label="Análisis anterior">❮</button>
+            <button id="siguiente" aria-label="Análisis siguiente">❯</button>
           </div>
           <div class="ventana-muestras" id="ventana">
             <div class="columnas" id="columnas"></div>
@@ -2208,8 +2344,7 @@
           !el.dataset.campo ||
           lectura ||
           !actual ||
-          actual.estado !== "abierto" ||
-          !turnoDisponible(actual)
+          actual.estado !== "abierto"
         )
           return;
         const k = el.dataset.campo,
@@ -2446,7 +2581,7 @@
               : Math.max(4, r.top - panel.offsetHeight - 8);
         if (horizontalCompacto() && columna)
           arriba = Math.max(
-            $("reporte").querySelector(".barra").getBoundingClientRect()
+            $("reporte").querySelector(".cabecera").getBoundingClientRect()
               .bottom + 3,
             arriba,
           );
@@ -2741,20 +2876,12 @@
         const h = horarioReporte(r);
         return momento >= h.turnoInicio && momento < h.turnoFin;
       }
-      function exigirTurno(r) {
-        if (!turnoDisponible(r))
-          throw Error(
-            "El horario de este turno terminó. El reporte está disponible solo para consulta.",
-          );
+      function exigirAbierto(r) {
+        if (r.estado !== "abierto" || r.eliminado)
+          throw Error("El reporte ya no permite cambios.");
       }
       setInterval(() => {
         if (!usuario) return;
-        if (actual && !lectura && !turnoDisponible(actual)) {
-          guardarRespaldo();
-          lectura = true;
-          cerrarTeclado();
-          dibujarReporte();
-        }
         if (!$("resumen").hidden) dibujarResumen();
       }, 1000);
       function hoy() {
@@ -2887,22 +3014,16 @@
           $("estado-reporte").textContent =
             actual.estado === "cerrado"
               ? "REPORTE CERRADO"
-              : !turnoDisponible(actual)
-                ? "TURNO FINALIZADO · SOLO CONSULTA"
-                : lectura
-                  ? "CONSULTA"
-                  : ocupado
-                    ? "Guardando…"
-                    : Object.keys(cambios).length
-                      ? navigator.onLine
-                        ? "Guardando…"
-                        : "Pendiente de conexión"
-                      : "Guardado";
-        const bloquear =
-          ocupado ||
-          lectura ||
-          actual?.estado === "cerrado" ||
-          (actual && !turnoDisponible(actual));
+              : lectura
+                ? "CONSULTA"
+                : ocupado
+                  ? "Guardando…"
+                  : Object.keys(cambios).length
+                    ? navigator.onLine
+                      ? "Guardando…"
+                      : "Pendiente de conexión"
+                    : "Guardado";
+        const bloquear = ocupado || lectura || actual?.estado === "cerrado";
         $("cerrar-reporte").disabled = bloquear || pendientes().length > 0;
         $("escanear").disabled =
           bloquear || !seleccionada || !pendientes().includes(seleccionada);
@@ -2924,6 +3045,27 @@
             (o) => !lista.some((r) => r.op === o.op && r.codigo === o.codigo),
           ),
         );
+      }
+      async function cargarNombreInspector(u) {
+        let nombre = u.displayName || "";
+        try {
+          const perfil = await getDocFromServer(
+            doc(db, "expalsa_calidad_identidades", u.uid),
+          );
+          if (perfil.exists()) {
+            const p = perfil.data();
+            nombre =
+              [p.firstNames || p.nombres, p.lastNames || p.apellidos]
+                .filter(Boolean)
+                .join(" ") ||
+              p.nombreCompleto ||
+              nombre;
+          }
+        } catch {}
+        if (usuario?.uid !== u.uid) return;
+        document
+          .querySelectorAll("[data-nombre-inspector]")
+          .forEach((el) => (el.textContent = nombre || u.email || ""));
       }
       async function cargarCatalogos() {
         const r = await Promise.all(
@@ -2973,6 +3115,7 @@
           mostrarPantalla("acceso");
           return;
         }
+        cargarNombreInspector(u);
         const lotePendiente = leerLocal("nuevo-lote", {});
         $("lote-nuevo").value = lotePendiente.lote || "";
         $("turno-nuevo").value = lotePendiente.turno || "";
@@ -2997,7 +3140,7 @@
             if (
               anterior.exists() &&
               !anterior.data().eliminado &&
-              turnoDisponible(anterior.data())
+              anterior.data().estado === "abierto"
             )
               await abrirReporte(retomar, false);
             else escribirLocal("ultimo", null);
@@ -3023,7 +3166,7 @@
       function dibujarResumen() {
         $("total-reportes").textContent = reportes.length;
         $("total-abiertos").textContent = reportes.filter(
-          (r) => r.estado === "abierto" && turnoDisponible(r),
+          (r) => r.estado === "abierto",
         ).length;
         $("total-cerrados").textContent = reportes.filter(
           (r) => r.estado === "cerrado",
@@ -3053,20 +3196,16 @@
               '" data-lectura="1">CONSULTAR</button></td><td><button class="enlace editar" data-abrir="' +
               r.id +
               '" ' +
-              (r.estado === "cerrado" || !turnoDisponible(r)
-                ? "disabled"
-                : "") +
+              (r.estado === "cerrado" ? "disabled" : "") +
               '>EDITAR</button></td><td><button class="enlace eliminar" data-eliminar="' +
               r.id +
               '" ' +
-              (r.estado === "cerrado" || !turnoDisponible(r)
-                ? "disabled"
-                : "") +
+              (r.estado === "cerrado" ? "disabled" : "") +
               ">ELIMINAR</button></td></tr>",
           )
           .join("");
         $("crear-body").innerHTML = reportes
-          .filter((r) => r.estado === "abierto" && turnoDisponible(r))
+          .filter((r) => r.estado === "abierto")
           .map(
             (r) =>
               "<tr><td>" +
@@ -3151,7 +3290,7 @@
         const r = await getDocFromServer(referencia("reportes", id));
         if (!r.exists()) throw Error("El reporte no existe.");
         actual = { id: r.id, ...r.data() };
-        lectura = soloLectura || !turnoDisponible(actual);
+        lectura = soloLectura || actual.estado === "cerrado";
         const respaldo = leerLocal("reporte-" + id, {});
         cambios =
           actual.estado === "abierto" && !lectura ? respaldo.cambios || {} : {};
@@ -3527,13 +3666,6 @@
             el.querySelector(".datos-analisis").scrollTop =
               desplazamientos.get(el.dataset.id)?.datos || 0;
           });
-        $("rango-muestras").textContent =
-          "ANÁLISIS " +
-          (inicioMuestras + 1) +
-          "–" +
-          fin +
-          " DE " +
-          muestras.length;
         $("anterior").disabled = inicioMuestras === 0;
         $("siguiente").disabled = fin === muestras.length;
         const mp = actual.materia,
@@ -3544,7 +3676,7 @@
           ["ÁREA", actual.area],
           ["TURNO", horarioReporte(actual).turno],
           [
-            "DISPONIBLE HASTA",
+            "FIN DEL TURNO",
             new Date(horarioReporte(actual).turnoFin).toLocaleString("es-EC", {
               timeZone: "America/Guayaquil",
               day: "2-digit",
@@ -3727,7 +3859,7 @@
           );
       }
       async function guardarMuestra(m, fotoDoc = null, finalizar = true) {
-        exigirTurno(actual);
+        exigirAbierto(actual);
         m.estatus = estatusCodigo(m);
         if (fotoDoc) validarMuestra(m);
         const revision = actual.revision,
@@ -3748,7 +3880,7 @@
             throw Error(
               "El reporte cambió en otro dispositivo. Revisa los datos y vuelve a guardar.",
             );
-          exigirTurno(r);
+          exigirAbierto(r);
           if (r.estado !== "abierto" || r.eliminado)
             throw Error("El reporte ya no permite cambios.");
           let lista = r.muestras.filter((x) => x.id !== m.id);
@@ -3800,7 +3932,7 @@
         await runTransaction(db, async (tx) => {
           const snap = await tx.get(ref),
             r = snap.data();
-          exigirTurno(r);
+          exigirAbierto(r);
           if (r.estado !== "abierto" || r.owner !== usuario.uid)
             throw Error("No puede modificar este reporte.");
           if (r.revision !== actual.revision)
@@ -3865,7 +3997,7 @@
           $("detalle-modal").showModal();
           return;
         }
-        if (lectura || !turnoDisponible(actual)) {
+        if (lectura) {
           if (!b.classList.contains("lista")) return;
         }
         if (b.dataset.quitar) accion(() => eliminarAnalisis(b.dataset.quitar));
@@ -4138,7 +4270,7 @@
             t.vence.toMillis() < Date.now()
           )
             throw Error("QR vencido o jefe no habilitado.");
-          exigirTurno(r);
+          exigirAbierto(r);
           if (r.estado !== "abierto" || !r.pendientes.includes(alertaId))
             throw Error("Esta alerta ya no está pendiente.");
           const alertas = { ...r.alertas };
@@ -4190,7 +4322,7 @@
               r = s.data();
             if (r.revision !== revision)
               throw Error("El reporte cambió. Revisa los nuevos datos.");
-            exigirTurno(r);
+            exigirAbierto(r);
             if (r.pendientes.length || r.estado !== "abierto")
               throw Error("El reporte no puede cerrarse.");
             tx.update(ref, {
@@ -4243,7 +4375,7 @@
               const ref = referencia("reportes", b.dataset.eliminar),
                 s = await tx.get(ref),
                 r = s.data();
-              exigirTurno(r);
+              exigirAbierto(r);
               if (r.owner !== usuario.uid)
                 throw Error("Solo puede eliminar sus propios reportes.");
               if (r.estado !== "abierto")
