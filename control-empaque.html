@@ -1898,7 +1898,18 @@
         </div>
         <form id="nuevo-lote" autocomplete="off">
           <label>LOTE<input id="lote-nuevo" required maxlength="40" /></label>
-          <label>ÁREA<input id="area-nueva" required maxlength="60" /></label>
+          <label
+            >ÁREA<select id="area-nueva" required>
+              <option value="">Seleccionar</option>
+              <option>MAQUINA</option>
+              <option>BRINE</option>
+              <option>DECORADO</option>
+              <option>CICLON</option>
+              <option>TORNADO</option>
+              <option>PELADO</option>
+              <option>DESCABEZADO</option>
+            </select></label
+          >
           <label
             >TURNO<select id="turno-nuevo" required>
               <option value="">Seleccionar</option>
@@ -2317,6 +2328,7 @@
         return (
           !!m.op ||
           !!m.codigo ||
+          !!m.estructura ||
           [
             "bruto",
             "neto",
@@ -2354,7 +2366,7 @@
           m.fotos = {};
           if (k === "op") m.codigo = "";
         }
-        m[k] = ["op", "codigo", "color", "estatus"].includes(k)
+        m[k] = ["op", "codigo", "color", "estatus", "estructura"].includes(k)
           ? el.value
           : el.value === ""
             ? ""
@@ -2767,6 +2779,18 @@
           if (!lote || !turno || !area)
             throw Error("Complete lote, área y turno.");
           if (
+            ![
+              "MAQUINA",
+              "BRINE",
+              "DECORADO",
+              "CICLON",
+              "TORNADO",
+              "PELADO",
+              "DESCABEZADO",
+            ].includes(area)
+          )
+            throw Error("Seleccione un área válida.");
+          if (
             reportes.some(
               (r) =>
                 r.lote === lote &&
@@ -2968,6 +2992,7 @@
           codigo: "",
           color: "A3",
           estatus: "",
+          estructura: "",
           bruto: "",
           neto: "",
           piezas: "",
@@ -3119,7 +3144,7 @@
         const lotePendiente = leerLocal("nuevo-lote", {});
         $("lote-nuevo").value = lotePendiente.lote || "";
         $("turno-nuevo").value = lotePendiente.turno || "";
-        $("area-nueva").value = lotePendiente.area || "";
+        $("area-nueva").value = areaReporte(lotePendiente.area);
         esAdmin = u.email?.toLowerCase() === ADMIN;
         mostrarPantalla("resumen");
         $("estado-resumen").textContent = "Cargando…";
@@ -3378,6 +3403,56 @@
           ">"
         );
       }
+      function areaReporte(area) {
+        const texto = String(area || "")
+          .normalize("NFD")
+          .replace(/[\u0300-\u036f]/g, "")
+          .toUpperCase()
+          .trim();
+        if (texto.startsWith("MAQUINA")) return "MAQUINA";
+        if (texto.startsWith("BRINE")) return "BRINE";
+        return texto;
+      }
+      function estructurasArea(area) {
+        const tipo = areaReporte(area),
+          total = tipo === "MAQUINA" ? 11 : tipo === "BRINE" ? 6 : 0;
+        return Array.from({ length: total }, (_, i) => tipo + " " + (i + 1));
+      }
+      function estructuraMuestra(m, area) {
+        if (m.estructura) return m.estructura;
+        const numero = String(area || "").match(/(?:#|\s)(\d+)\s*$/)?.[1];
+        const opciones = estructurasArea(area),
+          anterior = areaReporte(area) + " " + Number(numero);
+        return opciones.length
+          ? opciones.includes(anterior)
+            ? anterior
+            : ""
+          : areaReporte(area);
+      }
+      function elegirEstructura(m) {
+        const opciones = estructurasArea(actual.area),
+          valor = estructuraMuestra(m, actual.area);
+        if (!opciones.length)
+          return '<span class="dato gris">' + escapar(valor) + "</span>";
+        return (
+          '<select aria-label="Estructura" data-campo="estructura" data-muestra="' +
+          m.id +
+          '"><option value="">Seleccionar</option>' +
+          opciones
+            .map(
+              (v) =>
+                '<option value="' +
+                v +
+                '" ' +
+                (valor === v ? "selected" : "") +
+                ">" +
+                v +
+                "</option>",
+            )
+            .join("") +
+          "</select>"
+        );
+      }
       function estatusCodigo(m) {
         const o = ordenMuestra(m);
         if (!o) return "";
@@ -3520,10 +3595,7 @@
                 : "") +
             "</span>",
         );
-        s += fila(
-          "ESTRUCTURA",
-          '<span class="dato gris">' + escapar(actual.area) + "</span>",
-        );
+        s += fila("ESTRUCTURA", elegirEstructura(m));
         for (const [k, l] of [
           ["bruto", "PESO BRUTO (" + unidadPeso(m) + ")"],
           ["neto", "PESO NETO (" + unidadPeso(m) + ")"],
@@ -3861,6 +3933,7 @@
       async function guardarMuestra(m, fotoDoc = null, finalizar = true) {
         exigirAbierto(actual);
         m.estatus = estatusCodigo(m);
+        m.estructura = estructuraMuestra(m, actual.area);
         if (fotoDoc) validarMuestra(m);
         const revision = actual.revision,
           id = actual.id;
@@ -4304,6 +4377,13 @@
           for (const m of [...actual.muestras]) {
             await guardarMuestra(m);
             validarMuestra(m, true);
+            if (
+              estructurasArea(actual.area).length &&
+              !estructurasArea(actual.area).includes(
+                estructuraMuestra(m, actual.area),
+              )
+            )
+              throw Error("Seleccione la máquina o el Brine en cada análisis.");
             if (fotosMuestra(m).some((k) => !tieneFoto(m, k)))
               throw Error("Faltan fotografías confirmadas en una muestra.");
           }
