@@ -1072,7 +1072,8 @@
         font-size: 11px;
         color: #425b65;
       }
-      #nuevo-lote input {
+      #nuevo-lote input,
+      #nuevo-lote select {
         width: 100%;
         min-width: 0;
         padding: 10px;
@@ -1753,7 +1754,13 @@
         <form id="nuevo-lote" autocomplete="off">
           <label>LOTE<input id="lote-nuevo" required maxlength="40" /></label>
           <label>ÁREA<input id="area-nueva" required maxlength="60" /></label>
-          <label>TURNO<input id="turno-nuevo" required maxlength="40" /></label>
+          <label
+            >TURNO<select id="turno-nuevo" required>
+              <option value="">Seleccionar</option>
+              <option value="DÍA">DÍA · 07:00–22:00</option>
+              <option value="NOCHE">NOCHE · 19:00–10:00</option>
+            </select></label
+          >
           <button type="submit">CREAR REPORTE</button>
         </form>
         <button class="sesion" id="salir">CERRAR SESIÓN</button>
@@ -2155,7 +2162,8 @@
           !el.dataset.campo ||
           lectura ||
           !actual ||
-          actual.estado !== "abierto"
+          actual.estado !== "abierto" ||
+          !turnoDisponible(actual)
         )
           return;
         const k = el.dataset.campo,
@@ -2571,8 +2579,16 @@
             area = $("area-nueva").value.trim();
           if (!lote || !turno || !area)
             throw Error("Complete lote, área y turno.");
-          if (reportes.some((r) => r.lote === lote && r.estado === "abierto"))
-            throw Error("Este lote ya tiene un reporte abierto.");
+          if (
+            reportes.some(
+              (r) =>
+                r.lote === lote &&
+                r.estado === "abierto" &&
+                turnoDisponible(r) &&
+                horarioReporte(r).turno === turno,
+            )
+          )
+            throw Error("Este lote ya tiene un reporte abierto en este turno.");
           const mp = {
             lote,
             proveedor: materias.find((m) => m.lote === lote)?.proveedor || "",
@@ -2640,6 +2656,55 @@
       function idNuevo() {
         return crypto.randomUUID();
       }
+      function horarioTurno(turno, momento = Date.now()) {
+        const local = new Date(momento - 5 * 60 * 60 * 1000);
+        const noche = /noche|nocturno/i.test(turno);
+        if (noche && local.getUTCHours() < 19)
+          local.setUTCDate(local.getUTCDate() - 1);
+        const fecha = local.toISOString().slice(0, 10);
+        const inicio = Date.parse(
+          fecha + (noche ? "T19:00:00-05:00" : "T07:00:00-05:00"),
+        );
+        return {
+          turno: noche ? "NOCHE" : "DÍA",
+          turnoFecha: fecha,
+          turnoInicio: inicio,
+          turnoFin: inicio + 15 * 60 * 60 * 1000,
+        };
+      }
+      function horarioReporte(r) {
+        if (Number.isFinite(r.materia?.turnoFin)) return r.materia;
+        const creado =
+          r.creado?.toMillis?.() ||
+          (r.creado?.seconds
+            ? r.creado.seconds * 1000
+            : Date.parse(r.fecha + "T12:00:00-05:00"));
+        const horaLocal = new Date(creado - 5 * 60 * 60 * 1000).getUTCHours();
+        const turno =
+          r.materia?.turno ||
+          (horaLocal >= 19 || horaLocal < 7 ? "NOCHE" : "DÍA");
+        return horarioTurno(turno, creado);
+      }
+      function turnoDisponible(r, momento = Date.now()) {
+        const h = horarioReporte(r);
+        return momento >= h.turnoInicio && momento < h.turnoFin;
+      }
+      function exigirTurno(r) {
+        if (!turnoDisponible(r))
+          throw Error(
+            "El horario de este turno terminó. El reporte está disponible solo para consulta.",
+          );
+      }
+      setInterval(() => {
+        if (!usuario) return;
+        if (actual && !lectura && !turnoDisponible(actual)) {
+          guardarRespaldo();
+          lectura = true;
+          cerrarTeclado();
+          dibujarReporte();
+        }
+        if (!$("resumen").hidden) dibujarResumen();
+      }, 1000);
       function hoy() {
         return new Intl.DateTimeFormat("en-CA", {
           timeZone: "America/Guayaquil",
@@ -2749,16 +2814,22 @@
           $("estado-reporte").textContent =
             actual.estado === "cerrado"
               ? "REPORTE CERRADO"
-              : lectura
-                ? "CONSULTA"
-                : ocupado
-                  ? "Guardando…"
-                  : Object.keys(cambios).length
-                    ? navigator.onLine
-                      ? "Guardando…"
-                      : "Pendiente de conexión"
-                    : "Guardado";
-        const bloquear = ocupado || lectura || actual?.estado === "cerrado";
+              : !turnoDisponible(actual)
+                ? "TURNO FINALIZADO · SOLO CONSULTA"
+                : lectura
+                  ? "CONSULTA"
+                  : ocupado
+                    ? "Guardando…"
+                    : Object.keys(cambios).length
+                      ? navigator.onLine
+                        ? "Guardando…"
+                        : "Pendiente de conexión"
+                      : "Guardado";
+        const bloquear =
+          ocupado ||
+          lectura ||
+          actual?.estado === "cerrado" ||
+          (actual && !turnoDisponible(actual));
         $("cerrar-reporte").disabled = bloquear || pendientes().length > 0;
         $("escanear").disabled =
           bloquear || !seleccionada || !pendientes().includes(seleccionada);
@@ -2767,7 +2838,7 @@
           .forEach((el) => (el.disabled = bloquear));
         $("columnas").querySelectorAll("input").forEach(prepararEntrada);
         $("columnas")
-          .querySelectorAll("button.foto.lista")
+          .querySelectorAll("button.foto.lista, button.detalle")
           .forEach((el) => (el.disabled = ocupado));
         $("volver").disabled = ocupado;
       }
@@ -2828,7 +2899,18 @@
           $("mi-qr").hidden = !esJefe;
           const q = query(coleccion("reportes"), where("owner", "==", u.uid));
           const retomar = leerLocal("ultimo", null);
-          if (retomar) await abrirReporte(retomar, false);
+          if (retomar) {
+            const anterior = await getDocFromServer(
+              referencia("reportes", retomar),
+            );
+            if (
+              anterior.exists() &&
+              !anterior.data().eliminado &&
+              turnoDisponible(anterior.data())
+            )
+              await abrirReporte(retomar, false);
+            else escribirLocal("ultimo", null);
+          }
           salidaResumen = onSnapshot(
             q,
             (s) => {
@@ -2850,7 +2932,7 @@
       function dibujarResumen() {
         $("total-reportes").textContent = reportes.length;
         $("total-abiertos").textContent = reportes.filter(
-          (r) => r.estado === "abierto",
+          (r) => r.estado === "abierto" && turnoDisponible(r),
         ).length;
         $("total-cerrados").textContent = reportes.filter(
           (r) => r.estado === "cerrado",
@@ -2871,6 +2953,8 @@
               escapar(r.area) +
               "</td><td>" +
               fechaMostrar(r.fecha) +
+              " · " +
+              escapar(horarioReporte(r).turno) +
               '</td><td class="numero">' +
               r.numero +
               '</td><td><button class="enlace consultar" data-abrir="' +
@@ -2878,16 +2962,20 @@
               '" data-lectura="1">CONSULTAR</button></td><td><button class="enlace editar" data-abrir="' +
               r.id +
               '" ' +
-              (r.estado === "cerrado" ? "disabled" : "") +
+              (r.estado === "cerrado" || !turnoDisponible(r)
+                ? "disabled"
+                : "") +
               '>EDITAR</button></td><td><button class="enlace eliminar" data-eliminar="' +
               r.id +
               '" ' +
-              (r.estado === "cerrado" ? "disabled" : "") +
+              (r.estado === "cerrado" || !turnoDisponible(r)
+                ? "disabled"
+                : "") +
               ">ELIMINAR</button></td></tr>",
           )
           .join("");
         $("crear-body").innerHTML = reportes
-          .filter((r) => r.estado === "abierto")
+          .filter((r) => r.estado === "abierto" && turnoDisponible(r))
           .map(
             (r) =>
               "<tr><td>" +
@@ -2906,6 +2994,18 @@
       }
 
       async function crearReporte(mp, numero = null) {
+        const h = horarioTurno(
+          mp.turno ||
+            (new Date(Date.now() - 5 * 3600000).getUTCHours() >= 19 ||
+            new Date(Date.now() - 5 * 3600000).getUTCHours() < 7
+              ? "NOCHE"
+              : "DÍA"),
+        );
+        if (Date.now() < h.turnoInicio || Date.now() >= h.turnoFin)
+          throw Error(
+            "El turno seleccionado no está disponible en este horario.",
+          );
+        mp = { ...mp, ...h };
         const ref = doc(coleccion("reportes"));
         const contador = referencia("config", "contador");
         for (let intento = 0; intento < 4; intento++) {
@@ -2922,7 +3022,7 @@
                 lote: mp.lote,
                 proveedor: mp.proveedor,
                 area: mp.area,
-                fecha: hoy(),
+                fecha: h.turnoFecha,
                 numero: n,
                 materia: { ...mp },
                 residual: residuales.find((x) => x.lote === mp.lote) || {},
@@ -2960,6 +3060,7 @@
         const r = await getDocFromServer(referencia("reportes", id));
         if (!r.exists()) throw Error("El reporte no existe.");
         actual = { id: r.id, ...r.data() };
+        lectura = soloLectura || !turnoDisponible(actual);
         const respaldo = leerLocal("reporte-" + id, {});
         cambios =
           actual.estado === "abierto" && !lectura ? respaldo.cambios || {} : {};
@@ -3348,7 +3449,18 @@
           ["LOTE", actual.lote],
           ["FECHA", fechaMostrar(actual.fecha)],
           ["ÁREA", actual.area],
-          ["TURNO", mp.turno || ""],
+          ["TURNO", horarioReporte(actual).turno],
+          [
+            "DISPONIBLE HASTA",
+            new Date(horarioReporte(actual).turnoFin).toLocaleString("es-EC", {
+              timeZone: "America/Guayaquil",
+              day: "2-digit",
+              month: "2-digit",
+              hour: "2-digit",
+              minute: "2-digit",
+              hour12: false,
+            }),
+          ],
           ["PROVEEDOR", actual.proveedor],
           ["PISCINA", mp.piscina],
           ["CERTIFICACIÓN", mp.certificacion],
@@ -3522,6 +3634,7 @@
           );
       }
       async function guardarMuestra(m, fotoDoc = null, finalizar = true) {
+        exigirTurno(actual);
         m.estatus = estatusCodigo(m);
         if (fotoDoc) validarMuestra(m);
         const revision = actual.revision,
@@ -3542,6 +3655,7 @@
             throw Error(
               "El reporte cambió en otro dispositivo. Revisa los datos y vuelve a guardar.",
             );
+          exigirTurno(r);
           if (r.estado !== "abierto" || r.eliminado)
             throw Error("El reporte ya no permite cambios.");
           let lista = r.muestras.filter((x) => x.id !== m.id);
@@ -3593,6 +3707,7 @@
         await runTransaction(db, async (tx) => {
           const snap = await tx.get(ref),
             r = snap.data();
+          exigirTurno(r);
           if (r.estado !== "abierto" || r.owner !== usuario.uid)
             throw Error("No puede modificar este reporte.");
           if (r.revision !== actual.revision)
@@ -3657,7 +3772,7 @@
           $("detalle-modal").showModal();
           return;
         }
-        if (lectura) {
+        if (lectura || !turnoDisponible(actual)) {
           if (!b.classList.contains("lista")) return;
         }
         if (b.dataset.quitar) accion(() => eliminarAnalisis(b.dataset.quitar));
@@ -3930,6 +4045,7 @@
             t.vence.toMillis() < Date.now()
           )
             throw Error("QR vencido o jefe no habilitado.");
+          exigirTurno(r);
           if (r.estado !== "abierto" || !r.pendientes.includes(alertaId))
             throw Error("Esta alerta ya no está pendiente.");
           const alertas = { ...r.alertas };
@@ -3981,6 +4097,7 @@
               r = s.data();
             if (r.revision !== revision)
               throw Error("El reporte cambió. Revisa los nuevos datos.");
+            exigirTurno(r);
             if (r.pendientes.length || r.estado !== "abierto")
               throw Error("El reporte no puede cerrarse.");
             tx.update(ref, {
@@ -4033,6 +4150,7 @@
               const ref = referencia("reportes", b.dataset.eliminar),
                 s = await tx.get(ref),
                 r = s.data();
+              exigirTurno(r);
               if (r.owner !== usuario.uid)
                 throw Error("Solo puede eliminar sus propios reportes.");
               if (r.estado !== "abierto")
