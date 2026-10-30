@@ -1572,6 +1572,57 @@
           grid-row: 5;
         }
       }
+      .quitar-analisis {
+        font-size: 9px;
+        padding: 3px;
+        margin-left: 8px;
+        color: #a44747;
+        background: transparent;
+        border: 0;
+      }
+      .muestra-titulo strong {
+        margin-left: auto;
+      }
+      .detalle {
+        padding: 0;
+        width: 24px;
+        background: transparent;
+        color: #39657c;
+        border: 0;
+        font-size: 17px;
+      }
+      #detalle-texto {
+        white-space: pre-line;
+        line-height: 1.6;
+      }
+      #temporizadores {
+        margin-top: 6px;
+      }
+      .temporizador {
+        display: flex;
+        gap: 3px;
+        align-items: center;
+        margin-top: 3px;
+      }
+      .temporizador output {
+        font-size: 18px;
+        font-variant-numeric: tabular-nums;
+        margin-right: auto;
+      }
+      .temporizador button {
+        font-size: 9px;
+        padding: 4px;
+        min-height: 24px;
+      }
+      .datos-lote {
+        min-height: 0;
+        overflow-y: auto;
+        flex-shrink: 1;
+      }
+      .alertas-wrap {
+        min-height: 65px;
+        flex-shrink: 1;
+      }
     </style>
   </head>
   <body>
@@ -1674,15 +1725,15 @@
         <div class="tabla-scroll">
           <section class="crear">
             <div class="seccion-titulo">
-              <h2>Iniciar un reporte</h2>
-              <span>LOTES DISPONIBLES</span>
+              <h2>Ingresar a reporte</h2>
+              <span>REPORTES EN CURSO</span>
             </div>
             <table class="tabla-resumen">
               <thead>
                 <tr>
                   <th>LOTE</th>
-                  <th>PROVEEDOR</th>
                   <th>ÁREA</th>
+                  <th>TURNO</th>
                   <th>ACCIÓN</th>
                 </tr>
               </thead>
@@ -1692,11 +1743,9 @@
         </div>
         <form id="nuevo-lote" autocomplete="off">
           <label>LOTE<input id="lote-nuevo" required maxlength="40" /></label>
-          <label
-            >PROVEEDOR<input id="proveedor-nuevo" required maxlength="120"
-          /></label>
           <label>ÁREA<input id="area-nueva" required maxlength="60" /></label>
-          <button type="submit">INGRESAR LOTE</button>
+          <label>TURNO<input id="turno-nuevo" required maxlength="40" /></label>
+          <button type="submit">CREAR REPORTE</button>
         </form>
         <button class="sesion" id="salir">CERRAR SESIÓN</button>
         <div class="utilidades">
@@ -1745,6 +1794,7 @@
               <span>ORIGEN</span>
             </div>
             <table class="lote-datos" id="lote-datos"></table>
+            <div id="temporizadores" aria-label="Temporizadores"></div>
           </div>
           <div class="titulo-alertas">
             <h2>Alertas de calidad</h2>
@@ -1782,6 +1832,11 @@
         </aside>
       </div>
     </section>
+    <dialog id="detalle-modal">
+      <h2 id="detalle-titulo"></h2>
+      <p id="detalle-texto"></p>
+      <button data-cerrar="detalle-modal">CERRAR</button>
+    </dialog>
     <dialog id="camara">
       <h2 id="camara-titulo">FOTOGRAFÍA</h2>
       <video id="video" autoplay playsinline muted></video
@@ -1980,6 +2035,76 @@
               "No hay espacio para el respaldo local";
         }
       }
+      function dibujarTemporizadores() {
+        if (!actual) return;
+        const tiempos = leerLocal("tiempos-" + actual.id, {});
+        $("temporizadores").innerHTML = [0, 1, 2]
+          .map((i) => {
+            const t = tiempos[i] || { segundos: [120, 180, 300][i] },
+              restante = t.fin
+                ? Math.max(0, Math.ceil((t.fin - Date.now()) / 1000))
+                : t.segundos;
+            return (
+              '<div class="temporizador"><output aria-label="Temporizador ' +
+              (i + 1) +
+              '">' +
+              String(Math.floor(restante / 60)).padStart(2, "0") +
+              ":" +
+              String(restante % 60).padStart(2, "0") +
+              "</output>" +
+              [2, 3, 5]
+                .map(
+                  (min) =>
+                    '<button data-reloj="' +
+                    i +
+                    '" data-minutos="' +
+                    min +
+                    '">' +
+                    min +
+                    " min</button>",
+                )
+                .join("") +
+              '<button data-reloj="' +
+              i +
+              '" data-iniciar="1">' +
+              (t.fin && restante > 0 ? "PAUSAR" : "INICIAR") +
+              '</button><button data-reloj="' +
+              i +
+              '" data-reset="1" aria-label="Restablecer temporizador ' +
+              (i + 1) +
+              '">↺</button></div>'
+            );
+          })
+          .join("");
+      }
+      $("temporizadores").onclick = (e) => {
+        const b = e.target.closest("button");
+        if (!b || !actual) return;
+        const tiempos = leerLocal("tiempos-" + actual.id, {}),
+          i = Number(b.dataset.reloj),
+          t = tiempos[i] || {
+            segundos: [120, 180, 300][i],
+            base: [120, 180, 300][i],
+          };
+        if (b.dataset.minutos) {
+          t.base = Number(b.dataset.minutos) * 60;
+          t.segundos = t.base;
+          t.fin = Date.now() + t.base * 1000;
+        } else if (b.dataset.reset) {
+          t.segundos = t.base || [120, 180, 300][i];
+          t.fin = null;
+        } else if (t.fin && t.fin > Date.now()) {
+          t.segundos = Math.ceil((t.fin - Date.now()) / 1000);
+          t.fin = null;
+        } else {
+          t.segundos = t.fin ? t.base || [120, 180, 300][i] : t.segundos;
+          t.fin = Date.now() + t.segundos * 1000;
+        }
+        tiempos[i] = t;
+        escribirLocal("tiempos-" + actual.id, tiempos);
+        dibujarTemporizadores();
+      };
+      setInterval(dibujarTemporizadores, 1000);
       function guardarRespaldo() {
         if (!actual || lectura) return;
         escribirLocal("reporte-" + actual.id, {
@@ -2036,7 +2161,7 @@
           : el.value === ""
             ? ""
             : Number(el.value);
-        if (k === "estatus") delete m.fotos.defectos;
+        if (["codigo", "op"].includes(k)) m.estatus = estatusCodigo(m);
         cambios[m.id] = {
           m,
           finalizar,
@@ -2049,7 +2174,7 @@
           ? "Guardando…"
           : "Pendiente de conexión";
         programarGuardado();
-        if (k === "estatus") dibujarReporte();
+        if (["codigo", "op"].includes(k)) dibujarReporte();
       }
       async function sincronizar() {
         clearTimeout(temporizador);
@@ -2425,7 +2550,7 @@
       $("nuevo-lote").addEventListener("input", () => {
         escribirLocal("nuevo-lote", {
           lote: $("lote-nuevo").value,
-          proveedor: $("proveedor-nuevo").value,
+          turno: $("turno-nuevo").value,
           area: $("area-nueva").value,
         });
       });
@@ -2433,16 +2558,17 @@
         e.preventDefault();
         accion(async () => {
           const lote = $("lote-nuevo").value.trim(),
-            proveedor = $("proveedor-nuevo").value.trim(),
+            turno = $("turno-nuevo").value.trim(),
             area = $("area-nueva").value.trim();
-          if (!lote || !proveedor || !area)
-            throw Error("Complete lote, proveedor y área.");
+          if (!lote || !turno || !area)
+            throw Error("Complete lote, área y turno.");
           if (reportes.some((r) => r.lote === lote && r.estado === "abierto"))
             throw Error("Este lote ya tiene un reporte abierto.");
           const mp = {
             lote,
-            proveedor,
+            proveedor: materias.find((m) => m.lote === lote)?.proveedor || "",
             area,
+            turno,
             piscina: "",
             certificacion: "",
             sabor: "",
@@ -2452,6 +2578,10 @@
             bom: "",
             bof: "",
             cargadas: "",
+            ...materias.find((m) => m.lote === lote),
+            lote,
+            area,
+            turno,
           };
           const id = await crearReporte(mp);
           escribirLocal("nuevo-lote", {});
@@ -2674,7 +2804,7 @@
         }
         const lotePendiente = leerLocal("nuevo-lote", {});
         $("lote-nuevo").value = lotePendiente.lote || "";
-        $("proveedor-nuevo").value = lotePendiente.proveedor || "";
+        $("turno-nuevo").value = lotePendiente.turno || "";
         $("area-nueva").value = lotePendiente.area || "";
         esAdmin = u.email?.toLowerCase() === ADMIN;
         mostrarPantalla("resumen");
@@ -2687,10 +2817,7 @@
           $("sembrar").hidden = !esAdmin;
           $("administrar").hidden = !esAdmin;
           $("mi-qr").hidden = !esJefe;
-          const q =
-            esAdmin || esJefe
-              ? coleccion("reportes")
-              : query(coleccion("reportes"), where("owner", "==", u.uid));
+          const q = query(coleccion("reportes"), where("owner", "==", u.uid));
           const retomar = leerLocal("ultimo", null);
           if (retomar) await abrirReporte(retomar, false);
           salidaResumen = onSnapshot(
@@ -2698,7 +2825,7 @@
             (s) => {
               reportes = s.docs
                 .map((d) => ({ id: d.id, ...d.data() }))
-                .filter((r) => !r.eliminado);
+                .filter((r) => !r.eliminado && r.owner === u.uid);
               dibujarResumen();
               $("estado-resumen").textContent = s.metadata.fromCache
                 ? "Esperando confirmación del servidor"
@@ -2750,27 +2877,25 @@
               ">ELIMINAR</button></td></tr>",
           )
           .join("");
-        $("crear-body").innerHTML = materias
-          .filter(
-            (m) =>
-              !reportes.some(
-                (r) => r.lote === m.lote && r.estado === "abierto",
-              ),
-          )
+        $("crear-body").innerHTML = reportes
+          .filter((r) => r.estado === "abierto")
           .map(
-            (m) =>
+            (r) =>
               "<tr><td>" +
-              escapar(m.lote) +
+              escapar(r.lote) +
               "</td><td>" +
-              escapar(m.proveedor) +
+              escapar(r.area) +
               "</td><td>" +
-              escapar(m.area) +
-              '</td><td><button class="enlace ingresar" data-crear="' +
-              m.id +
-              '">INGRESAR</button></td></tr>',
+              escapar(r.materia?.turno || "") +
+              '</td><td><button class="ingresar" data-abrir="' +
+              r.id +
+              '">INGRESAR</button> <button class="enlace eliminar" data-eliminar="' +
+              r.id +
+              '">ELIMINAR</button></td></tr>',
           )
           .join("");
       }
+
       async function crearReporte(mp, numero = null) {
         const ref = doc(coleccion("reportes"));
         const contador = referencia("config", "contador");
@@ -2913,6 +3038,29 @@
           ">"
         );
       }
+      function estatusCodigo(m) {
+        const o = ordenMuestra(m);
+        if (!o) return "";
+        const tipo = String(
+          o.estatus || o.tipo || o.presentacion || "",
+        ).toLowerCase();
+        if (tipo.includes("entero")) return "entero";
+        if (tipo.includes("cola")) return "cola";
+        return String(o.codigo).startsWith("1068") || /entero/i.test(o.talla)
+          ? "entero"
+          : "cola";
+      }
+      function detalleBoton(m, tipo) {
+        return (
+          '<button class="detalle" data-detalle="' +
+          tipo +
+          '" data-muestra="' +
+          m.id +
+          '" aria-label="Ver ' +
+          tipo +
+          '">@</button>'
+        );
+      }
       function ordenMuestra(m) {
         return ordenes.find(
           (o) => o.codigo === m.codigo && (!m.op || o.op === m.op),
@@ -2934,6 +3082,7 @@
         return encontrados;
       }
       function dibujarMuestra(m) {
+        m.estatus = estatusCodigo(m);
         const op = ordenMuestra(m),
           numeroOP = m.op || op?.op || "",
           opciones = ordenes
@@ -2948,7 +3097,11 @@
           m.id +
           '"><div class="muestra-titulo"><span>ANÁLISIS</span><strong>' +
           String(ordenMuestras.indexOf(m.id) + 1).padStart(2, "0") +
-          '</strong></div><div class="datos-analisis">';
+          '</strong><button class="quitar-analisis" data-quitar="' +
+          m.id +
+          '" ' +
+          (lectura || actual.estado !== "abierto" ? "disabled" : "") +
+          '>ELIMINAR</button></div><div class="datos-analisis">';
         s += fila("HORA", '<span class="dato gris">' + m.hora + "</span>");
         s += fila("LOTE", '<span class="dato gris">' + actual.lote + "</span>");
         s += fila(
@@ -2958,6 +3111,7 @@
             '" value="' +
             escapar(numeroOP) +
             '">',
+          detalleBoton(m, "orden"),
         );
         s += fila(
           "IMPORTADOR",
@@ -2990,7 +3144,10 @@
         );
         s += fila(
           "EMBALAJE",
-          '<span class="dato gris">' + (cabecera?.embalaje || "") + "</span>",
+          '<span class="dato gris">' +
+            escapar(cabecera?.embalaje || "") +
+            "</span>",
+          detalleBoton(m, "empaque"),
         );
         s += fila(
           "COLOR",
@@ -3013,25 +3170,13 @@
         );
         s += fila(
           "ESTATUS",
-          '<select aria-label="Estatus" data-campo="estatus" data-muestra="' +
-            m.id +
-            '"><option value="">Seleccionar</option>' +
-            [
-              ["entero", "Entero"],
-              ["cola", "Cola"],
-            ]
-              .map(
-                ([v, l]) =>
-                  '<option value="' +
-                  v +
-                  '" ' +
-                  (m.estatus === v ? "selected" : "") +
-                  ">" +
-                  l +
-                  "</option>",
-              )
-              .join("") +
-            "</select>",
+          '<span class="dato">' +
+            (estatusCodigo(m) === "entero"
+              ? "Entero"
+              : estatusCodigo(m) === "cola"
+                ? "Cola"
+                : "") +
+            "</span>",
         );
         s += fila(
           "ESTRUCTURA",
@@ -3122,7 +3267,7 @@
           if (!lista[indice]) lista[indice] = m;
           else lista.push(m);
         }
-        const total = Math.max(3, lista.length);
+        const total = Math.max(1, lista.length);
         for (let i = 0; i < total; i++)
           if (!lista[i]) {
             const m = vacia();
@@ -3135,6 +3280,7 @@
       }
       function dibujarReporte() {
         if (!actual) return;
+        dibujarTemporizadores();
         const foco = document.activeElement?.dataset.campo
           ? identidadCampo(document.activeElement)
           : null;
@@ -3192,6 +3338,8 @@
         $("lote-datos").innerHTML = [
           ["LOTE", actual.lote],
           ["FECHA", fechaMostrar(actual.fecha)],
+          ["ÁREA", actual.area],
+          ["TURNO", mp.turno || ""],
           ["PROVEEDOR", actual.proveedor],
           ["PISCINA", mp.piscina],
           ["CERTIFICACIÓN", mp.certificacion],
@@ -3365,6 +3513,7 @@
           );
       }
       async function guardarMuestra(m, fotoDoc = null, finalizar = true) {
+        m.estatus = estatusCodigo(m);
         if (fotoDoc) validarMuestra(m);
         const revision = actual.revision,
           id = actual.id;
@@ -3421,6 +3570,48 @@
         actual = { id, ...confirmado.data() };
         dibujarReporte();
       }
+      async function eliminarAnalisis(id) {
+        if (
+          !confirm(
+            "¿Eliminar este análisis? Sus alertas registradas se conservarán.",
+          )
+        )
+          return;
+        const lista = muestrasVisibles()
+          .filter((m) => m.id !== id)
+          .map((m, i) => ({ ...m, posicion: i + 1 }));
+        const ref = referencia("reportes", actual.id);
+        await runTransaction(db, async (tx) => {
+          const snap = await tx.get(ref),
+            r = snap.data();
+          if (r.estado !== "abierto" || r.owner !== usuario.uid)
+            throw Error("No puede modificar este reporte.");
+          if (r.revision !== actual.revision)
+            throw Error("El reporte cambió. Intente nuevamente.");
+          tx.update(ref, {
+            muestras: r.muestras
+              .filter((m) => m.id !== id)
+              .map((m) => ({
+                ...m,
+                posicion: lista.findIndex((x) => x.id === m.id) + 1,
+              })),
+            revision: r.revision + 1,
+            actualizado: serverTimestamp(),
+            ultima: { tipo: "editar", muestraId: id, campo: "eliminado" },
+          });
+        });
+        delete cambios[id];
+        vacias = lista.filter(
+          (m) => !actual.muestras.some((x) => x.id === m.id),
+        );
+        ordenMuestras = lista.map((m) => m.id);
+        ultimoCampo = null;
+        const snap = await getDocFromServer(ref);
+        actual = { id: ref.id, ...snap.data() };
+        cerrarTeclado();
+        dibujarReporte();
+        guardarRespaldo();
+      }
       $("columnas").addEventListener("input", (e) => {
         if (e.target.tagName !== "SELECT") registrarEntrada(e.target, false);
       });
@@ -3430,7 +3621,37 @@
       $("columnas").addEventListener("click", (e) => {
         const b = e.target.closest("button");
         if (!b || ocupado) return;
-        if (lectura && !b.classList.contains("lista")) return;
+        if (b.dataset.detalle) {
+          const m = muestraPorId(b.dataset.muestra),
+            o = ordenMuestra(m);
+          cerrarTeclado();
+          $("detalle-titulo").textContent =
+            b.dataset.detalle === "orden"
+              ? "ORDEN DE PRODUCCIÓN"
+              : "MUESTRA DE EMPAQUE";
+          $("detalle-texto").textContent =
+            b.dataset.detalle === "orden"
+              ? "Ejemplo de orden de producción\nOP: " +
+                (m.op || o?.op || "Sin seleccionar") +
+                "\nCódigo: " +
+                (m.codigo || "Sin seleccionar") +
+                "\nImportador: " +
+                (o?.importador || "—") +
+                "\nTalla: " +
+                (o?.talla || "—") +
+                "\nLote: " +
+                actual.lote +
+                "\nEmpacar el producto según la talla y verificar peso, color y sellado."
+              : "Ejemplo de empaque\n" +
+                (o?.embalaje || "6CX2KG") +
+                "\nCaja máster con 6 cajas de 2 kg. Bolsa interior sellada, etiqueta con lote, talla, fecha y código del producto. Verificar que la caja esté limpia e íntegra.";
+          $("detalle-modal").showModal();
+          return;
+        }
+        if (lectura) {
+          if (!b.classList.contains("lista")) return;
+        }
+        if (b.dataset.quitar) accion(() => eliminarAnalisis(b.dataset.quitar));
         if (b.dataset.foto) {
           const m = muestraPorId(b.dataset.muestra);
           if (
@@ -3803,6 +4024,8 @@
               const ref = referencia("reportes", b.dataset.eliminar),
                 s = await tx.get(ref),
                 r = s.data();
+              if (r.owner !== usuario.uid)
+                throw Error("Solo puede eliminar sus propios reportes.");
               if (r.estado !== "abierto")
                 throw Error("No se puede eliminar un reporte cerrado.");
               tx.update(ref, {
