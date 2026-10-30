@@ -1606,12 +1606,21 @@
         margin-top: 3px;
       }
       .temporizador output {
-        font-size: 18px;
+        font-size: clamp(30px, 3vw, 44px);
+        line-height: 1.15;
+        font-weight: 600;
+        min-width: 0;
         font-variant-numeric: tabular-nums;
         margin-right: auto;
       }
+      .controles-reloj {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+        gap: 3px;
+      }
       .temporizador button {
-        font-size: 9px;
+        font-size: 10px;
         padding: 4px;
         min-height: 24px;
       }
@@ -2051,76 +2060,113 @@
               "No hay espacio para el respaldo local";
         }
       }
+      let audioReloj;
+      const sonidosReloj = new Map();
+      function detenerAlarma(i) {
+        for (const sonido of sonidosReloj.get(i) || []) {
+          try {
+            sonido.stop();
+          } catch {}
+        }
+        sonidosReloj.delete(i);
+      }
+      function sonarAlarma(i) {
+        if (!audioReloj || audioReloj.state !== "running") return;
+        detenerAlarma(i);
+        const sonidos = [];
+        for (const pausa of [0, 0.55]) {
+          const tono = audioReloj.createOscillator(),
+            volumen = audioReloj.createGain();
+          const inicio = audioReloj.currentTime + pausa;
+          tono.frequency.value = 880;
+          volumen.gain.setValueAtTime(0, inicio);
+          volumen.gain.linearRampToValueAtTime(0.22, inicio + 0.015);
+          volumen.gain.setValueAtTime(0.22, inicio + 0.16);
+          volumen.gain.linearRampToValueAtTime(0, inicio + 0.2);
+          tono.connect(volumen);
+          volumen.connect(audioReloj.destination);
+          tono.onended = () => {
+            tono.disconnect();
+            volumen.disconnect();
+          };
+          tono.start(inicio);
+          tono.stop(inicio + 0.21);
+          sonidos.push(tono);
+        }
+        sonidosReloj.set(i, sonidos);
+      }
       function dibujarTemporizadores() {
         if (!actual) return;
         const tiempos = leerLocal("tiempos-" + actual.id, {});
-        $("temporizadores").innerHTML = [0, 1, 2]
-          .map((i) => {
-            const t = tiempos[i] || { segundos: [120, 180, 300][i] },
-              restante = t.fin
-                ? Math.max(0, Math.ceil((t.fin - Date.now()) / 1000))
-                : t.segundos;
-            return (
-              '<div class="temporizador"><output aria-label="Temporizador ' +
-              (i + 1) +
-              '">' +
-              String(Math.floor(restante / 60)).padStart(2, "0") +
-              ":" +
-              String(restante % 60).padStart(2, "0") +
-              "</output>" +
-              [2, 3, 5]
-                .map(
-                  (min) =>
-                    '<button data-reloj="' +
-                    i +
-                    '" data-minutos="' +
-                    min +
-                    '">' +
-                    min +
-                    " min</button>",
-                )
-                .join("") +
-              '<button data-reloj="' +
-              i +
-              '" data-iniciar="1">' +
-              (t.fin && restante > 0 ? "PAUSAR" : "INICIAR") +
-              '</button><button data-reloj="' +
-              i +
-              '" data-reset="1" aria-label="Restablecer temporizador ' +
-              (i + 1) +
-              '">↺</button></div>'
-            );
-          })
-          .join("");
+        if (!$("temporizadores").children.length) {
+          $("temporizadores").innerHTML = [0, 1, 2]
+            .map(
+              (i) =>
+                '<div class="temporizador"><output aria-label="Temporizador ' +
+                (i + 1) +
+                '">00:00</output><div class="controles-reloj">' +
+                [2, 3, 5]
+                  .map(
+                    (min) =>
+                      '<button data-reloj="' +
+                      i +
+                      '" data-minutos="' +
+                      min +
+                      '">' +
+                      min +
+                      " min</button>",
+                  )
+                  .join("") +
+                '<button data-reloj="' +
+                i +
+                '" data-reset="1" aria-label="Reiniciar temporizador ' +
+                (i + 1) +
+                '">REINICIAR</button></div></div>',
+            )
+            .join("");
+        }
+        let cambio = false;
+        for (const i of [0, 1, 2]) {
+          const t = tiempos[i] || {},
+            restante = t.fin
+              ? Math.max(0, Math.ceil((t.fin - Date.now()) / 1000))
+              : 0;
+          const reloj = $("temporizadores").children[i];
+          reloj.querySelector("output").textContent =
+            String(Math.floor(restante / 60)).padStart(2, "0") +
+            ":" +
+            String(restante % 60).padStart(2, "0");
+          reloj.classList.toggle("corriendo", restante > 0);
+          if (t.fin && restante === 0 && !t.avisado) {
+            t.avisado = true;
+            tiempos[i] = t;
+            cambio = true;
+            sonarAlarma(i);
+          }
+        }
+        if (cambio) escribirLocal("tiempos-" + actual.id, tiempos);
       }
       $("temporizadores").onclick = (e) => {
         const b = e.target.closest("button");
         if (!b || !actual) return;
         const tiempos = leerLocal("tiempos-" + actual.id, {}),
-          i = Number(b.dataset.reloj),
-          t = tiempos[i] || {
-            segundos: [120, 180, 300][i],
-            base: [120, 180, 300][i],
-          };
+          i = Number(b.dataset.reloj);
+        detenerAlarma(i);
         if (b.dataset.minutos) {
-          t.base = Number(b.dataset.minutos) * 60;
-          t.segundos = t.base;
-          t.fin = Date.now() + t.base * 1000;
-        } else if (b.dataset.reset) {
-          t.segundos = t.base || [120, 180, 300][i];
-          t.fin = null;
-        } else if (t.fin && t.fin > Date.now()) {
-          t.segundos = Math.ceil((t.fin - Date.now()) / 1000);
-          t.fin = null;
-        } else {
-          t.segundos = t.fin ? t.base || [120, 180, 300][i] : t.segundos;
-          t.fin = Date.now() + t.segundos * 1000;
-        }
-        tiempos[i] = t;
+          const Audio = window.AudioContext || window.webkitAudioContext;
+          if (Audio) {
+            audioReloj ||= new Audio();
+            audioReloj.resume().catch(() => {});
+          }
+          tiempos[i] = {
+            fin: Date.now() + Number(b.dataset.minutos) * 60000,
+            avisado: false,
+          };
+        } else tiempos[i] = { fin: null, avisado: true };
         escribirLocal("tiempos-" + actual.id, tiempos);
         dibujarTemporizadores();
       };
-      setInterval(dibujarTemporizadores, 1000);
+      setInterval(dibujarTemporizadores, 250);
       function guardarRespaldo() {
         if (!actual || lectura) return;
         escribirLocal("reporte-" + actual.id, {
