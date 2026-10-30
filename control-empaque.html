@@ -2266,16 +2266,22 @@
             ])
               if (m[k] !== "" && (!Number.isFinite(m[k]) || m[k] < 0))
                 throw Error("Revise el valor de " + k);
+            if (entrada.finalizar && m.op && !m.codigo) {
+              const opciones = await consultarOP(m.op);
+              const preferido =
+                m.op === "37705"
+                  ? "1068020"
+                  : m.op === "37874"
+                    ? "7007030"
+                    : "";
+              const elegido =
+                opciones.find((o) => o.codigo === preferido) ||
+                (opciones.length === 1 ? opciones[0] : null);
+              if (elegido) m.codigo = elegido.codigo;
+            }
             await guardarMuestra(m, null, entrada.finalizar);
             if (cambios[id]?.version === entrada.version) delete cambios[id];
             guardarRespaldo();
-            if (entrada.finalizar && m.op) {
-              try {
-                await consultarOP(m.op);
-              } catch (e) {
-                avisar(errorTexto(e));
-              }
-            }
           }
         })();
         try {
@@ -2909,6 +2915,16 @@
           .forEach((el) => (el.disabled = ocupado));
         $("volver").disabled = ocupado;
       }
+      function completarOrdenes(lista) {
+        const ejemplos = datosEjercicio.ordenes.filter((o) =>
+          ["37874", "37705"].includes(o.op),
+        );
+        return lista.concat(
+          ejemplos.filter(
+            (o) => !lista.some((r) => r.op === o.op && r.codigo === o.codigo),
+          ),
+        );
+      }
       async function cargarCatalogos() {
         const r = await Promise.all(
           ["ordenes", "materias", "residuales"].map((n) =>
@@ -2918,6 +2934,14 @@
         [ordenes, materias, residuales] = r.map((s) =>
           s.docs.map((d) => ({ id: d.id, ...d.data() })),
         );
+        const completas = completarOrdenes(ordenes);
+        if (esAdmin && completas.length > ordenes.length) {
+          const lote = writeBatch(db);
+          for (const o of completas.slice(ordenes.length))
+            lote.set(referencia("ordenes", o.id), o);
+          await lote.commit();
+        }
+        ordenes = completas;
       }
       $("login-form").addEventListener("submit", async (e) => {
         e.preventDefault();
@@ -3249,12 +3273,14 @@
         const resultado = await getDocsFromServer(
           query(coleccion("ordenes"), where("op", "==", numero)),
         );
-        if (resultado.empty)
+        const encontrados = completarOrdenes(
+          resultado.docs.map((d) => ({
+            ...d.data(),
+            id: d.id,
+          })),
+        ).filter((o) => o.op === numero);
+        if (!encontrados.length)
           throw Error("La OP " + numero + " no existe en Firestore.");
-        const encontrados = resultado.docs.map((d) => ({
-          ...d.data(),
-          id: d.id,
-        }));
         ordenes = ordenes.filter((o) => o.op !== numero).concat(encontrados);
         return encontrados;
       }
@@ -4236,6 +4262,7 @@
           {
             id: "7007030",
             codigo: "7007030",
+            estatus: "cola",
             op: "37874",
             importador: "MARISCOS IN",
             talla: "30-40",
@@ -4251,6 +4278,7 @@
           {
             id: "1068020",
             codigo: "1068020",
+            estatus: "entero",
             op: "37705",
             importador: "NEW SAMCO",
             talla: "20-30",
