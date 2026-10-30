@@ -569,7 +569,7 @@ service cloud.firestore {
     match /expalsa_calidad_asignaciones/{id} {
       allow get: if expalsaAdmin() || (inspector() && theoryRequestOwnId(id));
       allow list: if expalsaAdmin();
-      allow create: if expalsaAdmin() && request.resource.data.keys().hasOnly(['uid','stage','attempt','version','revision','cycle','slot','assignedBy','assignedAt']) && request.resource.data.uid is string && activeTarget(request.resource.data.uid) && request.resource.data.stage in [1,2,3] && ((!exists(programDoc(request.resource.data.uid)) && request.resource.data.stage==1 && request.resource.data.attempt==1) || (exists(programDoc(request.resource.data.uid)) && request.resource.data.stage==getAfter(programDoc(request.resource.data.uid)).data.get('stageProgress',{'active':1}).active)) && request.resource.data.attempt in [1,2] && id==request.resource.data.uid+'_'+progressKey(request.resource.data.stage)+(request.resource.data.attempt==2?'_2':'') && request.resource.data.slot in [1,2,3,4,5,6,7,8] && request.resource.data.cycle is int && request.resource.data.cycle>0 && request.resource.data.revision is string && request.resource.data.assignedBy==request.auth.uid && request.resource.data.assignedAt==request.time && getAfter(dynamicBank(request.resource.data.version)).data.stage==request.resource.data.stage && getAfter(dynamicKey(request.resource.data.version)).data.stage==request.resource.data.stage;
+      allow create: if expalsaAdmin() && request.resource.data.keys().hasOnly(['uid','stage','attempt','version','revision','cycle','slot','assignedBy','assignedAt']) && request.resource.data.uid is string && activeTarget(request.resource.data.uid) && request.resource.data.stage in [1,2,3] && ((!exists(programDoc(request.resource.data.uid)) && request.resource.data.stage==1 && request.resource.data.attempt==1) || (exists(programDoc(request.resource.data.uid)) && getAfter(programDoc(request.resource.data.uid)).data.active==true && request.resource.data.stage==getAfter(programDoc(request.resource.data.uid)).data.get('stageProgress',{'active':1}).active)) && request.resource.data.attempt in [1,2] && id==request.resource.data.uid+'_'+progressKey(request.resource.data.stage)+(request.resource.data.attempt==2?'_2':'') && request.resource.data.slot in [1,2,3,4,5,6,7,8] && request.resource.data.cycle is int && request.resource.data.cycle>0 && request.resource.data.revision is string && request.resource.data.assignedBy==request.auth.uid && request.resource.data.assignedAt==request.time && getAfter(dynamicBank(request.resource.data.version)).data.stage==request.resource.data.stage && getAfter(dynamicKey(request.resource.data.version)).data.stage==request.resource.data.stage;
       allow update,delete: if false;
     }
 
@@ -757,7 +757,7 @@ service cloud.firestore {
     match /expalsa_calidad_programas/{uid} {
       allow get: if expalsaAdmin() || (inspector() && request.auth.uid==uid);
       allow list: if expalsaAdmin();
-      allow create: if expalsaAdmin() && request.resource.data.keys().hasOnly(['uid','email','startAt','active','createdAt','createdBy','resultAccessVersion','timeLimits','mode','enabledStages','updatedAt','updatedBy','retakes','stageProgress']) &&
+      allow create: if expalsaAdmin() && activeTarget(uid) && request.resource.data.keys().hasOnly(['uid','email','startAt','active','createdAt','createdBy','resultAccessVersion','timeLimits','mode','enabledStages','updatedAt','updatedBy','retakes','stageProgress']) &&
         request.resource.data.uid==uid && request.resource.data.email==get(accessDoc(uid)).data.email && request.resource.data.startAt is timestamp &&
         request.resource.data.active==true && request.resource.data.createdAt==request.time && request.resource.data.createdBy==request.auth.token.email &&
         request.resource.data.resultAccessVersion==2 && progressValid(uid,request.resource.data,{}) && limitsValid(request.resource.data.timeLimits) && retakesValid(uid,request.resource.data,{}) && manualStageFlags(uid,request.resource.data,{}) &&
@@ -892,14 +892,16 @@ service cloud.firestore {
       }
     }
 function emAdmin() {
-  return request.auth != null && request.auth.token.email == 'jefferson@expalsaevaluations.com';
-}
-function emUsuario() {
-  return request.auth != null && request.auth.token.email.matches('.*@expalsaevaluations[.]com');
+  return expalsaAdmin();
 }
 function emJefe(uid) {
   return exists(/databases/$(database)/documents/empaque_ejercicio_jefes/$(uid))
     && get(/databases/$(database)/documents/empaque_ejercicio_jefes/$(uid)).data.activo == true;
+}
+function emUsuario() {
+  return accountEmail() &&
+    request.auth.token.email.matches('^[^@]+@expalsaevaluations[.]com$') &&
+    (emAdmin() || inspector() || emJefe(request.auth.uid));
 }
 function emLeeReporte(r) {
   return emUsuario() && (r.owner == request.auth.uid || emAdmin() || emJefe(request.auth.uid));
