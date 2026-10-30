@@ -2780,16 +2780,37 @@
           .map((x) => x.toString(16).padStart(2, "0"))
           .join("");
       }
+      function unidadPeso(m) {
+        const embalaje = ordenMuestra(m)?.embalaje || "";
+        return /LB|LIBRA/i.test(embalaje) ? "LB" : "KG";
+      }
+      function cuentaPeso(m) {
+        const peso = Number(m.neto) / 1000,
+          piezas = Number(m.piezas);
+        if (!(peso > 0) || !(piezas > 0)) return null;
+        const entero = (estatusCodigo(m) || m.estatus) === "entero";
+        const divisor =
+          unidadPeso(m) === "LB"
+            ? entero
+              ? peso / 2.20462
+              : peso
+            : entero
+              ? peso
+              : peso * 2.20462;
+        return Math.round(piezas / divisor);
+      }
+      function minimoNeto(m, op) {
+        if (unidadPeso(m) === "LB")
+          return (Number(op.netoMin) / 453.59237) * 1000;
+        return Number(op.netoMin);
+      }
       function valores(m) {
         const piezas = Number(m.piezas) || 0;
         let malos = 0;
         for (const [k] of defectosMuestra(m))
           if (k !== "buenos") malos += Number(m[k]) || 0;
         return {
-          cuenta:
-            Number(m.neto) > 0 && piezas > 0
-              ? Math.round((piezas / Number(m.neto)) * 453.59237)
-              : null,
+          cuenta: cuentaPeso(m),
           uniformidad:
             Number(m.pequenos) > 0
               ? Number(m.grandes) / Number(m.pequenos)
@@ -3339,8 +3360,8 @@
           '<span class="dato gris">' + escapar(actual.area) + "</span>",
         );
         for (const [k, l] of [
-          ["bruto", "PESO BRUTO"],
-          ["neto", "PESO NETO"],
+          ["bruto", "PESO BRUTO (" + unidadPeso(m) + ")"],
+          ["neto", "PESO NETO (" + unidadPeso(m) + ")"],
           ["piezas", "TOTAL DE PIEZAS"],
         ])
           s += fila(l, entrada(m, k), fotoBoton(m, k));
@@ -3601,7 +3622,7 @@
           agregar("sabor", "NO ACEPTA SABOR", r.materia.sabor);
         if (!op.colores.includes(m.color))
           agregar("color", "NO ACEPTA " + m.color, m.color);
-        if (m.neto !== "" && Number(m.neto) < op.netoMin)
+        if (m.neto !== "" && Number(m.neto) < minimoNeto(m, op))
           agregar("neto", "PESO NETO BAJO", m.neto);
         if (
           v.cuenta !== null &&
