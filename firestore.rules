@@ -67,7 +67,7 @@ service cloud.firestore {
       return c is map && c.keys().hasOnly(['at','by','practiceId']) && c.at==request.time && c.by==request.auth.uid &&
         theoryDone(uid,key) && (!p.get('retakes',{}).get(key,{}).get('enabled',false) || theoryDone(uid,key+'_2')) &&
         practice.uid==uid && evaluationStage(practice)==n && practice.get('voided',false)==false &&
-        (practice.get('v2',{}).get('kind','')=='practical'?practice.v2.values.size()==59:practice.ratings.values().hasAny([0,1,2,3,4])) && practice.createdAt<=request.time;
+        (practice.get('v2',{}).get('kind','')=='practical'?(practice.v2.values.keys().hasAll(['P1_1', 'P2_1', 'P3_1', 'P3_2', 'P4_1', 'P5_1', 'P5_2', 'P5_3', 'P10_1', 'P11_1', 'P11_2', 'P11_3', 'P11_4', 'P11_5', 'P11_6', 'P11_7', 'P11_8', 'P12_1', 'P13_1', 'P13_2', 'P13_3', 'P13_4', 'P13_5', 'P13_6', 'P13_7', 'P13_8', 'P13_9']) && practice.v2.values.keys().hasAny(['P6_1', 'P6_2', 'P6_3', 'P6_4', 'P6_5', 'P6_6', 'P6_7', 'P6_8']) && practice.v2.values.keys().hasAny(['P7_1', 'P7_2', 'P7_3', 'P7_4', 'P7_5', 'P7_6', 'P7_7', 'P7_8']) && practice.v2.values.keys().hasAny(['P8_1', 'P8_2', 'P8_3', 'P8_4', 'P8_5', 'P8_6', 'P8_7', 'P8_8']) && practice.v2.values.keys().hasAny(['P9_1', 'P9_2', 'P9_3', 'P9_4', 'P9_5', 'P9_6', 'P9_7', 'P9_8'])):practice.ratings.values().hasAny([0,1,2,3,4])) && practice.createdAt<=request.time;
     }
     function rawRecordStage(d) {
       let profile=getAfter(/databases/$(database)/documents/expalsa_calidad_perfiles/$(d.payload.profileId)).data.payload;
