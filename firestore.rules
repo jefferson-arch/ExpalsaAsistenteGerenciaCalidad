@@ -141,14 +141,14 @@ service cloud.firestore {
     function dynamicBankValid(version,d) {
       return d.keys().hasOnly(['schema','stage','version','title','questionIds','writtenIds','questions','updatedAt']) &&
         d.schema in [2,3] && d.stage in [1,2,3] && d.version==version && d.title is string && d.updatedAt==request.time &&
-        d.questions is list && (d.schema!=3 || d.questions.size() in [28,30,43]) && d.questionIds is list && d.questions.size()==d.questionIds.size() && d.questions.size()>=1 && d.questions.size()<=60 &&
+        d.questions is list && (d.schema!=3 || d.questions.size() in [28,30,43,44]) && d.questionIds is list && d.questions.size()==d.questionIds.size() && d.questions.size()>=1 && d.questions.size()<=60 &&
         d.questionIds.toSet().size()==d.questionIds.size() && d.writtenIds is list && d.writtenIds.hasOnly(d.questionIds) &&
         getAfter(dynamicKey(version)).data.version==version && getAfter(dynamicKey(version)).data.stage==d.stage;
     }
     function dynamicKeyValid(version,d) {
       let b=getAfter(dynamicBank(version)).data;
       return d.keys().hasOnly(['schema','stage','version','keys','canonicalAnswers','updatedAt']) && d.schema in [2,3] && d.version==version &&
-        d.stage==b.stage && d.updatedAt==request.time && d.keys is map && d.keys.keys().hasOnly(b.questionIds) && d.keys.keys().hasAll(b.questionIds) && (b.questionIds.size()!=43 || (d.canonicalAnswers is map && d.canonicalAnswers.keys().hasOnly(b.questionIds) && d.canonicalAnswers.keys().hasAll(b.questionIds)));
+        d.stage==b.stage && d.updatedAt==request.time && d.keys is map && d.keys.keys().hasOnly(b.questionIds) && d.keys.keys().hasAll(b.questionIds) && (!(b.questionIds.size() in [43,44]) || (d.canonicalAnswers is map && d.canonicalAnswers.keys().hasOnly(b.questionIds) && d.canonicalAnswers.keys().hasAll(b.questionIds)));
     }
     function configurationValid(d) {
       return d.keys().hasOnly(['schema','versions','counts','durationMinutes','updatedAt']) && d.schema in [2,3] && d.updatedAt==request.time && d.durationMinutes in [15,30] &&
@@ -242,7 +242,7 @@ service cloud.firestore {
     function automaticCount(uid,stage) {
       let a=get(attemptDoc(uid,stage)).data;
       return a.get('bankSchema',1)==3 ?
-        (get(dynamicBank(a.version)).data.questionIds.size()==43 ? 43-a.answers.diff(get(dynamicKey(a.version)).data.canonicalAnswers).affectedKeys().size() : automaticThirty(a.answers,get(dynamicBank(a.version)).data,get(dynamicKey(a.version)).data.keys)) :
+        (get(dynamicBank(a.version)).data.questionIds.size() in [43,44] ? get(dynamicBank(a.version)).data.questionIds.size()-a.answers.diff(get(dynamicKey(a.version)).data.canonicalAnswers).affectedKeys().size() : automaticThirty(a.answers,get(dynamicBank(a.version)).data,get(dynamicKey(a.version)).data.keys)) :
         legacyTwelve(a.answers,get(stageBank(stage)).data,get(stageKey(stage)).data.keys);
     }
     match /expalsa_calidad_autocalificaciones/{uid}/etapas/{stage} {
@@ -556,13 +556,18 @@ service cloud.firestore {
 
     match /expalsa_calidad_modelos/{id} {
       allow get: if expalsaAdmin();
-      allow create,update: if expalsaAdmin() && id=='operativo2026' && request.resource.data.keys().hasOnly(['revision','questions','certifications','updatedAt']) && request.resource.data.revision=='operativo-2-componentes-20261030-v1' && request.resource.data.questions is list && request.resource.data.questions.size() in [28,43] && request.resource.data.certifications is list && request.resource.data.certifications.size()==9 && request.resource.data.updatedAt==request.time;
+      allow create,update: if expalsaAdmin() && id=='operativo2026' && request.resource.data.keys().hasOnly(['revision','questions','certifications','theoryRevision','updatedAt']) && request.resource.data.revision=='operativo-2-componentes-20261030-v1' && request.resource.data.questions is list && request.resource.data.questions.size() in [28,43,44] && request.resource.data.certifications is list && request.resource.data.certifications.size()==9 && request.resource.data.updatedAt==request.time;
       allow list,delete: if false;
     }
 
     match /expalsa_calidad_banco_maestro/{id} {
       allow get: if expalsaAdmin();
       allow create,update: if expalsaAdmin() && id=='activo' && request.resource.data.keys().hasOnly(['revision','questions','sources','examSize','cycleSize','maxPairOverlap','updatedAt']) && request.resource.data.revision is string && request.resource.data.questions is list && request.resource.data.questions.size()==150 && request.resource.data.examSize==30 && request.resource.data.cycleSize==8 && request.resource.data.maxPairOverlap==12 && (!('updatedAt' in request.resource.data) || request.resource.data.updatedAt==request.time);
+      allow list,delete: if false;
+    }
+    match /expalsa_calidad_calculos/{id} {
+      allow get: if expalsaAdmin();
+      allow create,update: if expalsaAdmin() && id in ['1','2','3','1_2','2_2','3_2'] && request.resource.data.keys().hasOnly(['revision','index','updatedAt']) && request.resource.data.revision=='teorico-20261031-v2' && request.resource.data.index is int && request.resource.data.index==(exists(/databases/$(database)/documents/expalsa_calidad_calculos/$(id))?resource.data.index+1:1) && request.resource.data.updatedAt==request.time;
       allow list,delete: if false;
     }
     match /expalsa_calidad_sorteos/{id} {
@@ -573,8 +578,9 @@ service cloud.firestore {
     match /expalsa_calidad_asignaciones/{id} {
       allow get: if expalsaAdmin() || (inspector() && theoryRequestOwnId(id));
       allow list: if expalsaAdmin();
-      allow create: if expalsaAdmin() && request.resource.data.keys().hasOnly(['uid','stage','attempt','version','revision','cycle','slot','assignedBy','assignedAt']) && request.resource.data.uid is string && activeTarget(request.resource.data.uid) && request.resource.data.stage in [1,2,3] && ((!exists(programDoc(request.resource.data.uid)) && request.resource.data.stage==1 && request.resource.data.attempt==1) || (exists(programDoc(request.resource.data.uid)) && getAfter(programDoc(request.resource.data.uid)).data.active==true && request.resource.data.stage==getAfter(programDoc(request.resource.data.uid)).data.get('stageProgress',{'active':1}).active)) && request.resource.data.attempt in [1,2] && id==request.resource.data.uid+'_'+progressKey(request.resource.data.stage)+(request.resource.data.attempt==2?'_2':'') && request.resource.data.slot in [1,2,3,4,5,6,7,8] && request.resource.data.cycle is int && request.resource.data.cycle>0 && request.resource.data.revision is string && request.resource.data.assignedBy==request.auth.uid && request.resource.data.assignedAt==request.time && getAfter(dynamicBank(request.resource.data.version)).data.stage==request.resource.data.stage && getAfter(dynamicKey(request.resource.data.version)).data.stage==request.resource.data.stage;
-      allow update,delete: if false;
+      allow create: if expalsaAdmin() && request.resource.data.keys().hasOnly(['uid','stage','attempt','version','revision','cycle','slot','assignedBy','assignedAt']) && request.resource.data.uid is string && activeTarget(request.resource.data.uid) && request.resource.data.stage in [1,2,3] && ((!exists(programDoc(request.resource.data.uid)) && request.resource.data.stage==1 && request.resource.data.attempt==1) || (exists(programDoc(request.resource.data.uid)) && getAfter(programDoc(request.resource.data.uid)).data.active==true && request.resource.data.stage==getAfter(programDoc(request.resource.data.uid)).data.get('stageProgress',{'active':1}).active)) && request.resource.data.attempt in [1,2] && id==request.resource.data.uid+'_'+progressKey(request.resource.data.stage)+(request.resource.data.attempt==2?'_2':'') && request.resource.data.slot is int && request.resource.data.slot>=1 && request.resource.data.slot<=15 && request.resource.data.cycle is int && request.resource.data.cycle>0 && request.resource.data.revision is string && request.resource.data.assignedBy==request.auth.uid && request.resource.data.assignedAt==request.time && getAfter(dynamicBank(request.resource.data.version)).data.stage==request.resource.data.stage && getAfter(dynamicKey(request.resource.data.version)).data.stage==request.resource.data.stage;
+      allow update: if expalsaAdmin() && activeTarget(resource.data.uid) && request.resource.data.keys()==resource.data.keys() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['version','revision','cycle','slot','assignedBy','assignedAt']) && request.resource.data.assignedBy==request.auth.uid && request.resource.data.assignedAt==request.time && request.resource.data.slot is int && request.resource.data.slot>=1 && request.resource.data.slot<=15 && request.resource.data.cycle is int && request.resource.data.cycle>0 && resource.data.stage==activeStage(resource.data.uid) && !exists(attemptDoc(resource.data.uid,progressKey(resource.data.stage)+(resource.data.attempt==2?'_2':''))) && !exists(sessionDoc(resource.data.uid,progressKey(resource.data.stage)+(resource.data.attempt==2?'_2':''))) && getAfter(dynamicBank(request.resource.data.version)).data.stage==resource.data.stage && getAfter(dynamicKey(request.resource.data.version)).data.stage==resource.data.stage;
+      allow delete: if false;
     }
 
 
