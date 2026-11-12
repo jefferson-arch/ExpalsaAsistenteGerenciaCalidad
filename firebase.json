@@ -1,0 +1,26 @@
+{
+  "firestore": { "rules": "firestore.rules" },
+  "storage": { "rules": "storage.rules" },
+  "hosting": {
+    "site": "oceantreasure-app",
+    "public": ".",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**",
+      "firestore.rules",
+      "storage.rules",
+      "*.md",
+      "*.txt"
+    ],
+    "headers": [
+      {
+        "source": "inspecciones.html",
+        "headers": [
+          { "key": "Cache-Control", "value": "no-cache" }
+        ]
+      }
+    ]
+  }
+}
+

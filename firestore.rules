@@ -1,3 +1,20 @@
+// ===============================================================
+// Assumed data model added for mapa-calidad.html
+//
+// grados/{gradeId}: l/r/q/t/s/m/c strings and lo/hi percentages.
+// destinos/{destinationId}: tipo, nombre, grados and optional country,
+// continent, latitude and longitude fields. Each record is admin managed.
+// clientes_calidad/{clientId}: nombre/tipo and bounded optional geography.
+// A ficha técnica references an existing client document and optional city.
+// fichas_tecnicas_calidad/{id}: extracted product criteria/text and PDF metadata.
+// expalsa_calidad_dispositivos/{uid}/equipos/{deviceId}: server-managed
+// device identity, public key and active/pending/revoked status.
+// Access for this page requires the configured administrator identity, or an
+// active expalsa_calidad_accesos/{uid} record and a matching active device ID
+// in the Firebase Auth token. Fabio and Karina are trusted Calidad admins;
+// they still require an active evaluations access record but do not require
+// device approval. Device keys and status are server-managed by trusted functions.
+// ===============================================================
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -16,6 +33,164 @@ service cloud.firestore {
         get(accessDoc(request.auth.uid)).data.active == true &&
         get(accessDoc(request.auth.uid)).data.get('deleted', false) != true &&
         get(accessDoc(request.auth.uid)).data.email == request.auth.token.email;
+    }
+    function calidadDevicePath(uid) {
+      return /databases/$(database)/documents/expalsa_calidad_dispositivos/$(uid)/equipos/$(request.auth.token.calidadDeviceId);
+    }
+    function calidadPageAdmin() {
+      return expalsaAdmin() || calidadTrustedAdmin();
+    }
+    function calidadTrustedAdmin() {
+      return signedIn() && request.auth.token.email is string &&
+        request.auth.token.email in ['fabio@expalsaevaluations.com','karina@expalsaevaluations.com'] &&
+        inspector();
+    }
+    function calidadPageUser() {
+      return expalsaAdmin() || calidadTrustedAdmin() ||
+        (signedIn() && request.auth.token.calidadDeviceId is string &&
+         exists(calidadDevicePath(request.auth.uid)) &&
+         get(calidadDevicePath(request.auth.uid)).data.status == 'active' &&
+         inspector());
+    }
+    function validCalidadGrade(d) {
+      return d.keys().hasOnly(['l','r','lo','hi','q','t','s','m','c']) &&
+        d.keys().hasAll(['l','r','lo','hi','q','t','s','m','c']) &&
+        d.l is string && d.l.size() <= 20 && d.r is string && d.r.size() <= 40 &&
+        d.lo is number && d.lo >= 0 && d.lo <= 100 && d.hi is number && d.hi >= d.lo && d.hi <= 100 &&
+        d.q is string && d.q.size() <= 50 && d.t in ['ok','no','mid','flex'] &&
+        d.s is string && d.s.size() <= 120 && d.m is string && d.m.size() <= 120 &&
+        d.c is string && d.c.matches('^#[0-9A-Fa-f]{6}$');
+    }
+    function validCalidadDestination(d) {
+      return d.keys().hasOnly(['tipo','codigo','nombre','continente','pais','lat','lon','grados']) &&
+        d.keys().hasAll(['tipo','nombre','grados']) && d.tipo in ['pais','continente','ciudad'] &&
+        d.nombre is string && d.nombre.size() > 0 && d.nombre.size() <= 100 &&
+        d.grados is list && d.grados.size() <= 10 &&
+        (!('codigo' in d) || (d.codigo is string && d.codigo.size() <= 20)) &&
+        (!('continente' in d) || (d.continente is string && d.continente.size() <= 30)) &&
+        (!('pais' in d) || (d.pais is string && d.pais.size() <= 3)) &&
+        (!('lat' in d) || (d.lat is number && d.lat >= -90 && d.lat <= 90)) &&
+        (!('lon' in d) || (d.lon is number && d.lon >= -180 && d.lon <= 180));
+    }
+    function calidadDestinationPath(id) {
+      return /databases/$(database)/documents/destinos/$(id);
+    }
+    function calidadClientCityMatches(d) {
+      return !('ciudadId' in d) || (
+        existsAfter(calidadDestinationPath(d.ciudadId)) &&
+        getAfter(calidadDestinationPath(d.ciudadId)).data.tipo == 'ciudad' &&
+        getAfter(calidadDestinationPath(d.ciudadId)).data.pais == d.pais &&
+        getAfter(calidadDestinationPath(d.ciudadId)).data.nombre == d.ciudad);
+    }
+    function validCalidadClientLocation(d) {
+      return (('ciudadId' in d) == ('ciudad' in d)) &&
+        (('ciudadId' in d) ?
+          (d.ciudadId is string && d.ciudadId.size() > 0 && d.ciudadId.size() <= 180 &&
+           d.ciudad is string && d.ciudad.size() > 0 && d.ciudad.size() <= 100 &&
+           d.pais is string && d.pais.matches('^[A-Z]{2}$')) :
+          (('pais' in d) || ('continente' in d)));
+    }
+    function validCalidadClientGradeOverride(o) {
+      return o is map && o.keys().hasOnly(['hi','lo','r','q','m']) &&
+        o.keys().hasAll(['hi','lo','r','q','m']) &&
+        o.lo is number && o.lo >= 0 && o.lo <= 100 &&
+        o.hi is number && o.hi >= o.lo && o.hi <= 100 &&
+        o.r is string && o.r.size() <= 40 &&
+        o.q is string && o.q.size() <= 50 &&
+        o.m is string && o.m.size() <= 120;
+    }
+    function validCalidadClientGrade(item) {
+      return item is map && item.keys().hasOnly(['g','o']) &&
+        item.keys().hasAll(['g']) &&
+        item.g in ['AAA','AA','A40','A50','A60','Am','Alt'] &&
+        (!('o' in item) || validCalidadClientGradeOverride(item.o));
+    }
+    function validCalidadClientGrades(grades) {
+      return grades is list && grades.size() <= 10 &&
+        (grades.size() < 1 || validCalidadClientGrade(grades[0])) &&
+        (grades.size() < 2 || validCalidadClientGrade(grades[1])) &&
+        (grades.size() < 3 || validCalidadClientGrade(grades[2])) &&
+        (grades.size() < 4 || validCalidadClientGrade(grades[3])) &&
+        (grades.size() < 5 || validCalidadClientGrade(grades[4])) &&
+        (grades.size() < 6 || validCalidadClientGrade(grades[5])) &&
+        (grades.size() < 7 || validCalidadClientGrade(grades[6])) &&
+        (grades.size() < 8 || validCalidadClientGrade(grades[7])) &&
+        (grades.size() < 9 || validCalidadClientGrade(grades[8])) &&
+        (grades.size() < 10 || validCalidadClientGrade(grades[9]));
+    }
+    function validCalidadClient(d) {
+      return d.keys().hasOnly(['ciudadId','pais','ciudad','nombre','tipo','puerto','continente','grados']) &&
+        d.keys().hasAll(['nombre','tipo']) && validCalidadClientLocation(d) &&
+        d.nombre is string && d.nombre.size() > 0 && d.nombre.size() <= 120 &&
+        d.tipo in ['cliente','importador'] &&
+        (!('pais' in d) || (d.pais is string && d.pais.matches('^[A-Z]{2}$'))) &&
+        (!('continente' in d) || (d.continente is string && d.continente.size() > 0 && d.continente.size() <= 30)) &&
+        (!('puerto' in d) || (d.puerto is string && d.puerto.size() <= 120)) &&
+        (!('grados' in d) || validCalidadClientGrades(d.grados)) && calidadClientCityMatches(d);
+    }
+    function validFichaCalibre(c) {
+      return c is map && c.keys().hasOnly(['talla','piezasKg','uniformidad']) &&
+        c.keys().hasAll(['talla','piezasKg','uniformidad']) &&
+        c.talla is string && c.talla.size() <= 40 &&
+        c.piezasKg is string && c.piezasKg.size() <= 40 &&
+        c.uniformidad is string && c.uniformidad.size() <= 40;
+    }
+    function validFichaCalibres(a) {
+      return a is list && a.size() <= 30 &&
+        (a.size() < 1 || validFichaCalibre(a[0])) &&
+        (a.size() < 2 || validFichaCalibre(a[1])) &&
+        (a.size() < 3 || validFichaCalibre(a[2])) &&
+        (a.size() < 4 || validFichaCalibre(a[3])) &&
+        (a.size() < 5 || validFichaCalibre(a[4])) &&
+        (a.size() < 6 || validFichaCalibre(a[5])) &&
+        (a.size() < 7 || validFichaCalibre(a[6])) &&
+        (a.size() < 8 || validFichaCalibre(a[7])) &&
+        (a.size() < 9 || validFichaCalibre(a[8])) &&
+        (a.size() < 10 || validFichaCalibre(a[9])) &&
+        (a.size() < 11 || validFichaCalibre(a[10])) &&
+        (a.size() < 12 || validFichaCalibre(a[11])) &&
+        (a.size() < 13 || validFichaCalibre(a[12])) &&
+        (a.size() < 14 || validFichaCalibre(a[13])) &&
+        (a.size() < 15 || validFichaCalibre(a[14])) &&
+        (a.size() < 16 || validFichaCalibre(a[15])) &&
+        (a.size() < 17 || validFichaCalibre(a[16])) &&
+        (a.size() < 18 || validFichaCalibre(a[17])) &&
+        (a.size() < 19 || validFichaCalibre(a[18])) &&
+        (a.size() < 20 || validFichaCalibre(a[19])) &&
+        (a.size() < 21 || validFichaCalibre(a[20])) &&
+        (a.size() < 22 || validFichaCalibre(a[21])) &&
+        (a.size() < 23 || validFichaCalibre(a[22])) &&
+        (a.size() < 24 || validFichaCalibre(a[23])) &&
+        (a.size() < 25 || validFichaCalibre(a[24])) &&
+        (a.size() < 26 || validFichaCalibre(a[25])) &&
+        (a.size() < 27 || validFichaCalibre(a[26])) &&
+        (a.size() < 28 || validFichaCalibre(a[27])) &&
+        (a.size() < 29 || validFichaCalibre(a[28])) &&
+        (a.size() < 30 || validFichaCalibre(a[29]));
+    }
+    function validFichaTecnica(d, id) {
+      return id is string && id.size() > 0 && id.size() <= 180 &&
+        d.keys().hasOnly(['clienteId','clienteNombre','tipoCliente','producto','codigoProducto','categoria','criterios','materiaExtrana','sabor','pais','continente','ciudadId','ciudad','puerto','textoExtraido','pdfNombre','metadata','estado','calibres']) &&
+        d.keys().hasAll(['clienteId','clienteNombre','tipoCliente','producto','criterios','textoExtraido','pdfNombre','metadata']) &&
+        d.clienteId is string && d.clienteId.size() > 0 && d.clienteId.size() <= 180 &&
+        d.clienteNombre is string && d.clienteNombre.size() > 0 && d.clienteNombre.size() <= 120 &&
+        d.tipoCliente in ['cliente','importador'] &&
+        d.producto is string && d.producto.size() > 0 && d.producto.size() <= 200 &&
+        (!('estado' in d) || d.estado in ['activa','inactiva']) &&
+        (!('calibres' in d) || validFichaCalibres(d.calibres)) &&
+        (!('codigoProducto' in d) || (d.codigoProducto is string && d.codigoProducto.size() <= 120)) &&
+        (!('categoria' in d) || (d.categoria is string && d.categoria.size() <= 120)) &&
+        d.criterios is list && d.criterios.size() <= 25 &&
+        (!('materiaExtrana' in d) || (d.materiaExtrana is string && d.materiaExtrana.size() <= 1000)) &&
+        (!('sabor' in d) || (d.sabor is string && d.sabor.size() <= 1000)) &&
+        d.textoExtraido is string && d.textoExtraido.size() <= 50000 &&
+        d.pdfNombre is string && d.pdfNombre.size() > 0 && d.pdfNombre.size() <= 200 &&
+        d.metadata is map && d.metadata.size() <= 4 &&
+        (!('pais' in d) || (d.pais is string && d.pais.matches('^[A-Z]{2}$'))) &&
+        (!('continente' in d) || (d.continente is string && d.continente.size() > 0 && d.continente.size() <= 30)) &&
+        (!('ciudadId' in d) || (d.ciudadId is string && d.ciudadId.size() > 0 && d.ciudadId.size() <= 180)) &&
+        (!('ciudad' in d) || (d.ciudad is string && d.ciudad.size() > 0 && d.ciudad.size() <= 100)) &&
+        (!('puerto' in d) || (d.puerto is string && d.puerto.size() <= 120));
     }
     function photoDoc(uid) { return /databases/$(database)/documents/expalsa_calidad_fotos_perfil/$(uid); }
     function photoPresent(uid) {
@@ -397,6 +572,10 @@ service cloud.firestore {
     function radarTopics(uid,d) {
       return d.keys().hasOnly(['schema','uid','asOf','practice','theory','average','delta','paired','covered','practicalAxes','theoreticalAxes','updatedBy','updatedAt']) && d.size()==13 && d.schema==3 && d.uid==uid && d.asOf.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$') && radarScore(d.practice) && radarScore(d.theory) && radarScore(d.average) && radarMean(d.practice,d.theory,d.average) && d.delta==null && d.paired==0 && d.covered is int && d.covered>=0 && d.covered<=9 && d.practicalAxes is map && d.practicalAxes.size()==9 && d.practicalAxes.keys().hasOnly(['cuenta', 'bruto', 'neto', 'uniformidad', 'calidad', 'ordenes', 'registros', 'organolepticos', 'sulfitos']) && radarScore(d.practicalAxes.cuenta) && radarScore(d.practicalAxes.bruto) && radarScore(d.practicalAxes.neto) && radarScore(d.practicalAxes.uniformidad) && radarScore(d.practicalAxes.calidad) && radarScore(d.practicalAxes.ordenes) && radarScore(d.practicalAxes.registros) && radarScore(d.practicalAxes.organolepticos) && radarScore(d.practicalAxes.sulfitos) && d.theoreticalAxes is map && d.theoreticalAxes.size()==11 && d.theoreticalAxes.keys().hasOnly(['certificaciones', 'piezas', 'calculoscuenta', 'glaseo', 'uniformidad', 'cuenta', 'peso', 'calidad', 'temperatura', 'sulfitos', 'codex']) && radarScore(d.theoreticalAxes.certificaciones) && radarScore(d.theoreticalAxes.piezas) && radarScore(d.theoreticalAxes.calculoscuenta) && radarScore(d.theoreticalAxes.glaseo) && radarScore(d.theoreticalAxes.uniformidad) && radarScore(d.theoreticalAxes.cuenta) && radarScore(d.theoreticalAxes.peso) && radarScore(d.theoreticalAxes.calidad) && radarScore(d.theoreticalAxes.temperatura) && radarScore(d.theoreticalAxes.sulfitos) && radarScore(d.theoreticalAxes.codex) && d.updatedBy==request.auth.uid && d.updatedAt==request.time;
     }
+    function radarTraining(uid,d) {
+      return d.keys().hasOnly(['schema','uid','asOf','practice','theory','average','delta','paired','covered','practicalAxes','theoreticalAxes','updatedBy','updatedAt']) && d.size()==13 && d.schema==4 && d.uid==uid && d.asOf is string && d.asOf.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$') && radarScore(d.practice) && radarScore(d.theory) && radarScore(d.average) && radarMean(d.practice,d.theory,d.average) && d.delta==null && d.paired==0 && d.covered is int && d.covered>=0 && d.covered<=9 && d.practicalAxes is map && d.practicalAxes.size()==9 && d.practicalAxes.keys().hasOnly(['cuenta','bruto','neto','uniformidad','calidad','ordenes','registros','organolepticos','sulfitos']) && radarScore(d.practicalAxes.cuenta) && radarScore(d.practicalAxes.bruto) && radarScore(d.practicalAxes.neto) && radarScore(d.practicalAxes.uniformidad) && radarScore(d.practicalAxes.calidad) && radarScore(d.practicalAxes.ordenes) && radarScore(d.practicalAxes.registros) && radarScore(d.practicalAxes.organolepticos) && radarScore(d.practicalAxes.sulfitos) && d.theoreticalAxes is map && d.theoreticalAxes.size()==10 && d.theoreticalAxes.keys().hasOnly(['C1','C2','C3','C4','C5','C6','C7','C8','C9','C10']) && radarScore(d.theoreticalAxes.C1) && radarScore(d.theoreticalAxes.C2) && radarScore(d.theoreticalAxes.C3) && radarScore(d.theoreticalAxes.C4) && radarScore(d.theoreticalAxes.C5) && radarScore(d.theoreticalAxes.C6) && radarScore(d.theoreticalAxes.C7) && radarScore(d.theoreticalAxes.C8) && radarScore(d.theoreticalAxes.C9) && radarScore(d.theoreticalAxes.C10) && d.updatedBy==request.auth.uid && d.updatedAt==request.time;
+    }
+
     function radarOperational(uid,d) {
       return d.keys().hasOnly(['schema','uid','asOf','practice','theory','average','delta','paired','covered','competencies','technical','updatedBy','updatedAt']) && d.size()==13 && d.schema==2 && d.uid==uid && d.asOf.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$') && radarScore(d.practice) && radarScore(d.theory) && radarScore(d.average) && radarMean(d.practice,d.theory,d.average) && d.delta==null && d.paired==0 && d.covered is int && d.covered>=0 && d.covered<=13 && d.competencies is map && d.competencies.size()==39 && d.competencies.keys().hasOnly(['P1_practice', 'P1_theory', 'P1_average', 'P2_practice', 'P2_theory', 'P2_average', 'P3_practice', 'P3_theory', 'P3_average', 'P4_practice', 'P4_theory', 'P4_average', 'P5_practice', 'P5_theory', 'P5_average', 'P6_practice', 'P6_theory', 'P6_average', 'P7_practice', 'P7_theory', 'P7_average', 'P8_practice', 'P8_theory', 'P8_average', 'P9_practice', 'P9_theory', 'P9_average', 'P10_practice', 'P10_theory', 'P10_average', 'P11_practice', 'P11_theory', 'P11_average', 'P12_practice', 'P12_theory', 'P12_average', 'P13_practice', 'P13_theory', 'P13_average']) && radarScore(d.competencies.P1_practice) && radarScore(d.competencies.P1_theory) && radarScore(d.competencies.P1_average) && radarScore(d.competencies.P2_practice) && radarScore(d.competencies.P2_theory) && radarScore(d.competencies.P2_average) && radarScore(d.competencies.P3_practice) && radarScore(d.competencies.P3_theory) && radarScore(d.competencies.P3_average) && radarScore(d.competencies.P4_practice) && radarScore(d.competencies.P4_theory) && radarScore(d.competencies.P4_average) && radarScore(d.competencies.P5_practice) && radarScore(d.competencies.P5_theory) && radarScore(d.competencies.P5_average) && radarScore(d.competencies.P6_practice) && radarScore(d.competencies.P6_theory) && radarScore(d.competencies.P6_average) && radarScore(d.competencies.P7_practice) && radarScore(d.competencies.P7_theory) && radarScore(d.competencies.P7_average) && radarScore(d.competencies.P8_practice) && radarScore(d.competencies.P8_theory) && radarScore(d.competencies.P8_average) && radarScore(d.competencies.P9_practice) && radarScore(d.competencies.P9_theory) && radarScore(d.competencies.P9_average) && radarScore(d.competencies.P10_practice) && radarScore(d.competencies.P10_theory) && radarScore(d.competencies.P10_average) && radarScore(d.competencies.P11_practice) && radarScore(d.competencies.P11_theory) && radarScore(d.competencies.P11_average) && radarScore(d.competencies.P12_practice) && radarScore(d.competencies.P12_theory) && radarScore(d.competencies.P12_average) && radarScore(d.competencies.P13_practice) && radarScore(d.competencies.P13_theory) && radarScore(d.competencies.P13_average) && d.technical is map && d.technical.size()==10 && d.technical.keys().hasOnly(['C1','C2','C3','C4','C5','C6','C7','C8','C9','C10']) && radarScore(d.technical.C1) && radarScore(d.technical.C2) && radarScore(d.technical.C3) && radarScore(d.technical.C4) && radarScore(d.technical.C5) && radarScore(d.technical.C6) && radarScore(d.technical.C7) && radarScore(d.technical.C8) && radarScore(d.technical.C9) && radarScore(d.technical.C10) && d.updatedBy==request.auth.uid && d.updatedAt==request.time;
     }
@@ -426,9 +605,9 @@ service cloud.firestore {
         d.updatedBy==request.auth.uid && d.updatedAt==request.time;
     }
     match /expalsa_calidad_radares/{uid} {
-      allow get: if expalsaAdmin() || (inspector() && request.auth.uid==uid);
+      allow get: if expalsaAdmin() || (inspector() && request.auth.uid==uid && resource.data.get('schema',0)==4);
       allow list: if expalsaAdmin();
-      allow create,update: if expalsaAdmin() && activeTarget(uid) && (request.resource.data.schema==3?radarTopics(uid,request.resource.data):request.resource.data.schema==2?radarOperational(uid,request.resource.data):radarData(uid,request.resource.data));
+      allow create,update: if expalsaAdmin() && activeTarget(uid) && radarTraining(uid,request.resource.data);
       allow delete: if false;
     }
 
@@ -1058,17 +1237,38 @@ match /empaque_ejercicio_reportes/{reporteId} {
         && d.updatedBy == request.auth.uid
         && d.updatedAt == request.time;
     }
+    function capBoardScore(v) { return v == null || (v is number && v >= 0 && v <= 100); }
+    function capBoardScoresValid(s) { return s is list && s.size() == 10
+      && capBoardScore(s[0]) && capBoardScore(s[1]) && capBoardScore(s[2]) && capBoardScore(s[3]) && capBoardScore(s[4])
+      && capBoardScore(s[5]) && capBoardScore(s[6]) && capBoardScore(s[7]) && capBoardScore(s[8]) && capBoardScore(s[9]); }
+    function capBoardRowValid(r) { return r is map && r.keys().hasOnly(['name','scores']) && r.keys().hasAll(['name','scores'])
+      && r.name is string && r.name.size() >= 1 && r.name.size() <= 100 && capBoardScoresValid(r.scores); }
+    function capBoardRowsValid(rows) { return rows is list && rows.size() <= 10
+      && (rows.size() < 1 || capBoardRowValid(rows[0])) && (rows.size() < 2 || capBoardRowValid(rows[1]))
+      && (rows.size() < 3 || capBoardRowValid(rows[2])) && (rows.size() < 4 || capBoardRowValid(rows[3]))
+      && (rows.size() < 5 || capBoardRowValid(rows[4])) && (rows.size() < 6 || capBoardRowValid(rows[5]))
+      && (rows.size() < 7 || capBoardRowValid(rows[6])) && (rows.size() < 8 || capBoardRowValid(rows[7]))
+      && (rows.size() < 9 || capBoardRowValid(rows[8])) && (rows.size() < 10 || capBoardRowValid(rows[9])); }
+    match /expalsa_calidad_capacitacion_tablero/{recordId} {
+      allow get: if recordId == 'cohorte_actual' && (expalsaAdmin() || inspector());
+      allow list, delete: if false;
+      allow create, update: if recordId == 'cohorte_actual' && expalsaAdmin()
+        && request.resource.data.keys().hasOnly(['schema','inspectors','updatedAt'])
+        && request.resource.data.keys().hasAll(['schema','inspectors','updatedAt'])
+        && request.resource.data.schema == 1 && capBoardRowsValid(request.resource.data.inspectors)
+        && request.resource.data.updatedAt == request.time;
+    }
     match /expalsa_capacitacion_2026_participantes/{participantId} {
       allow get, list: if expalsaAdmin();
-      allow create: if capAdminWrite(request.resource.data)
-        && request.resource.data.id == participantId
-        && participantId.matches('ci_[a-zA-Z0-9]{8,64}')
-        && request.resource.data.createdAt == request.time;
-      allow update: if capAdminWrite(request.resource.data)
-        && request.resource.data.id == participantId
-        && request.resource.data.id == resource.data.id
-        && request.resource.data.createdAt == resource.data.createdAt;
-      allow delete: if false;
+      // Membership changes go through manageTrainingGroups, which validates
+      // identity across every group in a serialized server transaction.
+      // groupNumber is a positive group number; absent means legacy Group 1.
+      allow create, update, delete: if false;
+    }
+    match /expalsa_capacitacion_2026_grupos/{groupId} {
+      // Server-only metadata: number, name, jpeg, rev and audit timestamps.
+      // One responsible per group; participant references exactly one number.
+      allow read, write: if false;
     }
     function capParticipantActive(personId) {
       let p = get(/databases/$(database)/documents/expalsa_capacitacion_2026_participantes/$(personId)).data;
@@ -1272,5 +1472,145 @@ match /empaque_ejercicio_reportes/{reporteId} {
         && request.resource.data.rev == resource.data.rev + 1
         && request.resource.data.createdAt == resource.data.createdAt;
     }
+    // Evaluacion propia del plan 2026. Banco privado e inmutable desde el cliente.
+    // Intentos: identidad/alcance/banco/inicio inmutables. Respuestas JSON <=60000.
+    // Marcas JSON <=1500, revision incremental, entrega y calificacion irreversibles.
+    match /expalsa_capacitacion_2026_bancos/{version} {
+      allow get: if expalsaAdmin();
+      allow list, create, update, delete: if false;
+    }
+    function capExamValid(d,id) {
+      return expalsaAdmin()
+        && d.keys().hasAll(['id','accountUid','scope','purpose','durationMinutes','bankId','status','answers','marks','startedAt','createdAt','updatedAt','submittedAt','gradedAt','submissionKind','createdBy','updatedBy','rev'])
+        && d.keys().hasOnly(['id','accountUid','scope','purpose','durationMinutes','bankId','status','answers','marks','startedAt','createdAt','updatedAt','submittedAt','gradedAt','submissionKind','createdBy','updatedBy','rev'])
+        && d.id==id && id.matches('^[A-Za-z0-9]{20}$')
+        && d.accountUid is string && d.accountUid.size()>0 && d.accountUid.size()<=128
+        && d.scope is int && d.scope>=0 && d.scope<=10
+        && d.purpose in ['inicial','final','refuerzo']
+        && d.durationMinutes is int && d.durationMinutes>=5 && d.durationMinutes<=180
+        && d.bankId=='cap-plan-20261103-v1'
+        && exists(/databases/$(database)/documents/expalsa_capacitacion_2026_bancos/$(d.bankId))
+        && d.status in ['active','submitted','graded']
+        && d.answers is string && d.answers.size()>=2 && d.answers.size()<=60000
+        && d.marks is string && d.marks.size()>=2 && d.marks.size()<=1500
+        && d.startedAt is timestamp && d.createdAt is timestamp && d.updatedAt==request.time
+        && d.createdBy is string && d.createdBy.size()>0 && d.createdBy.size()<=128
+        && d.updatedBy==request.auth.uid && d.rev is int && d.rev>=1
+        && ((d.status=='active' && d.submittedAt==null && d.gradedAt==null && d.submissionKind=='' && d.marks=='{}') ||
+          (d.status in ['submitted','graded'] && d.submittedAt is timestamp && d.submissionKind in ['manual','expired'] &&
+          ((d.status=='submitted' && d.gradedAt==null && d.marks=='{}') || (d.status=='graded' && d.gradedAt is timestamp))));
+    }
+    function capExamIdentityStable(d,a) {
+      return d.id==a.id && d.accountUid==a.accountUid && d.scope==a.scope && d.purpose==a.purpose
+        && d.durationMinutes==a.durationMinutes && d.bankId==a.bankId && d.startedAt==a.startedAt
+        && d.createdAt==a.createdAt && d.createdBy==a.createdBy && d.rev==a.rev+1;
+    }
+    function capExamUpdate(d,a) {
+      let deadline=a.startedAt+duration.value(a.durationMinutes*60,'s');
+      return capExamIdentityStable(d,a) && (
+        (a.status=='active' && d.status=='active' && request.time<deadline
+          && d.diff(a).affectedKeys().hasOnly(['answers','rev','updatedAt','updatedBy'])) ||
+        (a.status=='active' && d.status=='submitted' && d.answers==a.answers && d.submittedAt==request.time
+          && (d.submissionKind=='expired'?request.time>=deadline:request.time<deadline)
+          && d.diff(a).affectedKeys().hasOnly(['status','submittedAt','submissionKind','rev','updatedAt','updatedBy'])) ||
+        (a.status=='submitted' && d.status=='graded' && d.answers==a.answers && d.submittedAt==a.submittedAt && d.submissionKind==a.submissionKind
+          && d.gradedAt==request.time
+          && d.diff(a).affectedKeys().hasOnly(['status','marks','gradedAt','rev','updatedAt','updatedBy']))
+      );
+    }
+    match /expalsa_capacitacion_2026_evaluaciones/{id} {
+      allow get, list: if expalsaAdmin();
+      allow create: if capExamValid(request.resource.data,id)
+        && request.resource.data.rev==1 && request.resource.data.status=='active'
+        && request.resource.data.answers=='{}' && request.resource.data.marks=='{}'
+        && request.resource.data.startedAt==request.time && request.resource.data.createdAt==request.time
+        && request.resource.data.createdBy==request.auth.uid
+        && exists(accessDoc(request.resource.data.accountUid))
+        && get(accessDoc(request.resource.data.accountUid)).data.active==true
+        && get(accessDoc(request.resource.data.accountUid)).data.get('deleted',false)!=true;
+      allow update: if capExamValid(request.resource.data,id) && capExamUpdate(request.resource.data,resource.data);
+      allow delete: if false;
+    }
+
+    // Mapa de calidad y sabor: isolated from every other repository collection.
+    match /grados/{id} {
+      allow get, list: if calidadPageUser();
+      allow create, update: if calidadPageUser() && calidadPageAdmin() && validCalidadGrade(request.resource.data);
+      allow delete: if calidadPageUser() && calidadPageAdmin();
+    }
+    match /destinos/{id} {
+      allow get, list: if calidadPageUser();
+      allow create, update: if calidadPageUser() && calidadPageAdmin() && validCalidadDestination(request.resource.data);
+      allow delete: if calidadPageUser() && calidadPageAdmin();
+    }
+    match /clientes_calidad/{clientId} {
+      allow get, list: if calidadPageUser();
+      allow create, update: if calidadPageUser() && calidadPageAdmin() && validCalidadClient(request.resource.data);
+      allow delete: if calidadPageUser() && calidadPageAdmin();
+    }
+    match /fichas_tecnicas_calidad/{id} {
+      allow get, list: if calidadPageUser();
+      allow create, update: if calidadPageUser() && calidadPageAdmin() && validFichaTecnica(request.resource.data, id);
+      allow delete: if calidadPageUser() && calidadPageAdmin();
+    }
+
+
+    // Inspection module: isolated records for facilities reports; existing maps,
+    // training, access control and quality collections keep their own rules.
+    function expalsaInspectionUser() { return expalsaAdmin() || inspector(); }
+    function expalsaInspectionPhotoValid(photo) {
+      return photo is map && photo.keys().hasAll(['path','name','uploadedBy','origin'])
+        && photo.keys().hasOnly(['path','name','uploadedBy','origin'])
+        && photo.uploadedBy is string && photo.uploadedBy.size() >= 20 && photo.uploadedBy.size() <= 128
+        && photo.uploadedBy.matches('^[A-Za-z0-9_-]+')
+        && photo.name is string && photo.name.size() > 0 && photo.name.size() <= 120
+        && photo.origin in ['camera','gallery'] && photo.path is string && photo.path.size() == 83 + photo.uploadedBy.size()
+        && photo.path.matches('^expalsa_inspecciones/' + photo.uploadedBy + '/[A-Za-z0-9_-]{20}/[A-Fa-f0-9-]{36}[.]jpg');
+    }
+    function expalsaInspectionPhotosValid(photos) {
+      return photos is list && photos.size() <= 6
+        && (photos.size() < 1 || expalsaInspectionPhotoValid(photos[0]))
+        && (photos.size() < 2 || expalsaInspectionPhotoValid(photos[1]))
+        && (photos.size() < 3 || expalsaInspectionPhotoValid(photos[2]))
+        && (photos.size() < 4 || expalsaInspectionPhotoValid(photos[3]))
+        && (photos.size() < 5 || expalsaInspectionPhotoValid(photos[4]))
+        && (photos.size() < 6 || expalsaInspectionPhotoValid(photos[5]));
+    }
+    function expalsaInspectionRecordValid(d, id) {
+      return id.size() == 20 && id.matches('^[A-Za-z0-9]+')
+        && d.keys().hasAll(['area','inspectedAt','location','description','department','notificationDate','status','notes','photos','inspectorName','inspectorEmail','inspectorUid','createdBy','createdAt','updatedBy','updatedAt','source'])
+        && d.keys().hasOnly(['area','inspectedAt','location','description','department','notificationDate','status','notes','photos','inspectorName','inspectorEmail','inspectorUid','createdBy','createdAt','updatedBy','updatedAt','source'])
+        && d.area in ['PLANTA','EXTERIORES','BODEGAS','DESECHOS','DESPACHO','OTROS']
+        && d.inspectedAt is string && d.inspectedAt.size() == 10 && d.inspectedAt.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}')
+        && d.location is string && d.location.size() > 0 && d.location.size() <= 160
+        && d.description is string && d.description.size() > 0 && d.description.size() <= 1800
+        && d.department is string && d.department.size() > 0 && d.department.size() <= 100
+        && d.notificationDate is string && (d.notificationDate == '' || (d.notificationDate.size() == 10 && d.notificationDate.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}')))
+        && d.status in ['cumple','no_cumple','parcial','nueva']
+        && d.notes is string && d.notes.size() <= 1200 && expalsaInspectionPhotosValid(d.photos)
+        && d.inspectorName is string && d.inspectorName.size() > 0 && d.inspectorName.size() <= 120
+        && d.inspectorEmail is string && d.inspectorEmail.matches('^[^@]+@[^@]+$')
+        && d.inspectorUid is string && d.inspectorUid.size() > 0 && d.inspectorUid.size() <= 128
+        && d.createdBy is string && d.createdBy.size() > 0 && d.createdBy.size() <= 128
+        && d.createdAt is timestamp && d.updatedBy == request.auth.uid && d.updatedAt == request.time
+        && d.source in ['app','pdf_import'];
+    }
+    match /expalsa_calidad_inspecciones/{id} {
+      allow get, list: if expalsaInspectionUser();
+      allow create: if expalsaInspectionUser() && expalsaInspectionRecordValid(request.resource.data, id)
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.inspectorUid == request.auth.uid
+        && request.resource.data.inspectorEmail == request.auth.token.email
+        && request.resource.data.createdAt == request.time;
+      allow update: if expalsaInspectionUser() && expalsaInspectionRecordValid(request.resource.data, id)
+        && request.resource.data.createdBy == resource.data.createdBy
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.inspectorUid == resource.data.inspectorUid
+        && request.resource.data.inspectorEmail == resource.data.inspectorEmail
+        && request.resource.data.inspectorName == resource.data.inspectorName;
+      allow delete: if expalsaAdmin();
+    }
+
   }
 }
+

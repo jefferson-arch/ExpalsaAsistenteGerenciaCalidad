@@ -1,0 +1,97 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    // Administrador EXPALSA: cuenta y UID deben coincidir con Firestore. 
+    function expalsaStorageAdmin() {
+      return request.auth != null &&
+        request.auth.token.email == 'jefferson@expalsaevaluations.com' &&
+        firestore.exists(/databases/(default)/documents/expalsa_calidad_config/administrador) &&
+        firestore.get(/databases/(default)/documents/expalsa_calidad_config/administrador).data.uid == request.auth.uid &&
+        firestore.get(/databases/(default)/documents/expalsa_calidad_config/administrador).data.email == request.auth.token.email;
+    }
+
+    // Unicamente inspectores vigentes, no eliminados.
+    function expalsaStorageActive(uid) {
+      return firestore.exists(/databases/(default)/documents/expalsa_calidad_accesos/$(uid)) &&
+        firestore.get(/databases/(default)/documents/expalsa_calidad_accesos/$(uid)).data.active == true &&
+        firestore.get(/databases/(default)/documents/expalsa_calidad_accesos/$(uid)).data.get('deleted', false) != true;
+    }
+
+    // El inspector solo puede operar en la ruta de su propio UID.
+    function expalsaStorageInspector(uid) {
+      return request.auth != null &&
+        request.auth.uid == uid &&
+        expalsaStorageActive(uid) &&
+        firestore.get(/databases/(default)/documents/expalsa_calidad_accesos/$(uid)).data.email == request.auth.token.email;
+    }
+
+    // Fotografia JPEG con tamano maximo de 1.5 MB.
+    function expalsaStoragePhotoValid() {
+      return request.auth != null &&
+        request.resource != null &&
+        request.resource.size > 0 &&
+        request.resource.size <= 1500000 &&
+        request.resource.contentType == 'image/jpeg' &&
+        request.resource.metadata.method in ['camera', 'gallery'] &&
+        request.resource.metadata.uploadedBy == request.auth.uid;
+    }
+
+    // Ruta utilizada en el HTML EXPALSA actualizado.
+    match /expalsa_calidad_fotos/{uid}/perfil.jpg {
+      allow get: if expalsaStorageAdmin() || expalsaStorageInspector(uid);
+      allow list: if false;
+
+      // Camara: el inspector; galeria: solo administrador autenticado.
+      allow create, update: if expalsaStoragePhotoValid() &&
+        ((expalsaStorageInspector(uid) && request.resource.metadata.method == 'camera') ||
+         (expalsaStorageAdmin() && expalsaStorageActive(uid) &&
+          request.resource.metadata.method == 'gallery'));
+
+      // No permitir eliminar la evidencia fotografica desde el navegador.
+      allow delete: if false;
+    }
+
+    // Otras rutas no quedan habilitadas por este archivo.
+    // Si tu proyecto usa Storage para otros sistemas, sus reglas deben
+    // integrarse antes de publicar este conjunto completo.
+    match /expalsa_capacitacion_privada_2026/{pdfFile} {
+      function authorizedAdmin() {
+        return request.auth != null
+          && request.auth.token.email == 'jefferson@expalsaevaluations.com'
+          && firestore.get(/databases/(default)/documents/expalsa_calidad_config/administrador).data.uid == request.auth.uid
+          && firestore.get(/databases/(default)/documents/expalsa_calidad_config/administrador).data.email == request.auth.token.email;
+      }
+      allow get: if authorizedAdmin()
+        && pdfFile in ['PLAN_CAPACITACION.pdf', 'DIA_01.pdf', 'DIA_02.pdf', 'DIA_03.pdf', 'DIA_04.pdf', 'DIA_05.pdf', 'DIA_06.pdf', 'DIA_07.pdf', 'DIA_08.pdf', 'DIA_09.pdf', 'DIA_10.pdf'];
+      allow list: if false;
+      allow create, update, delete: if false;
+    }
+    
+
+    // Evidence for facility inspections is readable only to authenticated
+    // EXPALSA inspectors/admins. Uploads are scoped to the uploader and JPEG.
+    function expalsaInspectionStorageInspector() {
+      return request.auth != null && request.auth.token.email is string
+        && firestore.exists(/databases/(default)/documents/expalsa_calidad_accesos/$(request.auth.uid))
+        && firestore.get(/databases/(default)/documents/expalsa_calidad_accesos/$(request.auth.uid)).data.active == true
+        && firestore.get(/databases/(default)/documents/expalsa_calidad_accesos/$(request.auth.uid)).data.get('deleted', false) != true
+        && firestore.get(/databases/(default)/documents/expalsa_calidad_accesos/$(request.auth.uid)).data.email == request.auth.token.email;
+    }
+    match /expalsa_inspecciones/{uid}/{inspectionId}/{photoFile} {
+      allow get: if expalsaStorageAdmin() || expalsaInspectionStorageInspector();
+      allow list: if false;
+      allow create, update: if request.auth != null && request.auth.uid == uid
+        && (expalsaStorageAdmin() || expalsaInspectionStorageInspector())
+        && inspectionId.size() == 20 && inspectionId.matches('^[A-Za-z0-9]+')
+        && photoFile.size() == 40 && photoFile.matches('^[A-Fa-f0-9-]{36}[.]jpg')
+        && request.resource != null && request.resource.size > 0 && request.resource.size <= 1450000
+        && request.resource.contentType == 'image/jpeg'
+        && request.resource.metadata.uploadedBy == request.auth.uid
+        && request.resource.metadata.origin in ['camera','gallery'];
+      allow delete: if expalsaStorageAdmin();
+    }
+
+  }
+}
