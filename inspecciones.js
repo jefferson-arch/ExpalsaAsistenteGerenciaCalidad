@@ -16,6 +16,7 @@ const LOCATIONS = {
 let demoRecordsPromise;
 const SECTIONS = [
   { id: 'Inicio', icon: '⌂', title: 'Inicio', description: 'Resumen de hallazgos y acciones de inspección.' },
+  { id: 'Alertas', icon: '⚑', title: 'Alertas', description: 'Seguimiento prioritario de incumplimientos y observaciones parciales.' },
   ...AREAS.map(area => ({ id: area, icon: ({ PLANTA: '▦', EXTERIORES: '⌂', BODEGAS: '▤', DESECHOS: '♲', DESPACHO: '⇧', 'SILO DE HIELO': '❄', OTROS: '⋯' })[area], title: areaTitle(area), description: `Observaciones registradas en ${area.toLowerCase()}.` })),
   { id: 'General', icon: '▧', title: 'General', description: 'Observaciones consolidadas de todas las instalaciones.' },
   { id: 'Historial', icon: '◷', title: 'Historial', description: 'Busca, filtra y revisa las inspecciones anteriores.' }
@@ -87,7 +88,8 @@ function setConnection(connected, label = '') {
 
 function drawNavigation() {
   $('sectionNav').className = 'side-nav';
-  $('sectionNav').innerHTML = SECTIONS.map(item => `<button class="nav-button${state.tab === item.id ? ' active' : ''}" data-tab="${item.id}" type="button"><span class="nav-icon">${item.icon}</span><span>${item.title}</span></button>`).join('');
+  const alerts = state.records.filter(row => row.status === 'no_cumple' || row.status === 'parcial').length;
+  $('sectionNav').innerHTML = SECTIONS.map(item => `<button class="nav-button${state.tab === item.id ? ' active' : ''}" data-tab="${item.id}" type="button"><span class="nav-icon">${item.icon}</span><span>${item.title}</span>${item.id === 'Alertas' && alerts ? `<span class="nav-alert-count">${alerts}</span>` : ''}</button>`).join('');
 }
 
 function recordsForView() {
@@ -152,7 +154,8 @@ function render() {
     : selected.description;
   $('pageEyebrow').textContent = state.tab === 'Historial' ? 'CONSULTA Y SEGUIMIENTO' : 'CONTROL DE INSTALACIONES';
   $('dashboardView').hidden = state.tab !== 'Inicio';
-  $('listView').hidden = state.tab === 'Inicio';
+  $('alertsView').hidden = state.tab !== 'Alertas';
+  $('listView').hidden = ['Inicio', 'Alertas'].includes(state.tab);
   $('listScope').textContent = selectedInspection ? 'Detalle de inspección' : state.tab === 'Historial' ? 'Inspecciones por fecha' : AREAS.includes(state.tab) ? selected.title : 'Todas las áreas';
   $('backToHistory').hidden = !selectedInspection;
   const activeRun = state.inspectionRuns.find(run => run.id === state.activeInspectionId);
@@ -163,9 +166,12 @@ function render() {
   $('closeInspectionButton').hidden = !active;
   const savedArea = state.progress[`${state.activeInspectionId}:${state.tab}`];
   $('saveAreaButton').textContent = savedArea ? `Guardado ✓ · ${savedArea.savedByName || userLabel()}` : 'Guardar pestaña';
-  $('newInspection').textContent = ['Inicio', 'Historial'].includes(state.tab) ? '＋ Nueva inspección' : '＋ Nueva observación';
+  $('newInspection').textContent = ['Inicio', 'Alertas', 'Historial'].includes(state.tab) ? '＋ Nueva inspección' : '＋ Nueva observación';
   const filtered = recordsForView();
-  if (state.tab === 'Historial' && !selectedInspection) {
+  if (state.tab === 'Alertas') {
+    $('resultCount').textContent = '';
+    $('recordsBody').innerHTML = '';
+  } else if (state.tab === 'Historial' && !selectedInspection) {
     const groups = groupInspections(filtered);
     $('resultCount').textContent = `${groups.length} ${groups.length === 1 ? 'inspección' : 'inspecciones'}`;
     $('recordsHead').innerHTML = '<tr><th>N.º DE INSPECCIÓN</th><th>FECHA</th><th>ÁREAS INSPECCIONADAS</th><th>HALLAZGOS</th><th>ESTADOS</th><th>ABRIR</th></tr>';
