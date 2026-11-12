@@ -90,8 +90,10 @@ service firebase.storage {
         && request.resource.contentType == 'image/jpeg'
         && request.resource.metadata.uploadedBy == request.auth.uid
         && request.resource.metadata.origin in ['camera','gallery'];
-      allow delete: if expalsaStorageAdmin();
+      allow delete: if expalsaStorageAdmin() ||
+        (request.auth != null && request.auth.uid == uid && expalsaInspectionStorageInspector());
     }
 
   }
 }
+
