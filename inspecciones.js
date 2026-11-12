@@ -378,11 +378,70 @@ async function exportPdf() {
     const Pdf = globalThis.jspdf?.jsPDF;
     if (!Pdf || !Pdf.API.autoTable) throw new Error('No se pudo cargar el módulo PDF.');
     const pdf = new Pdf({ orientation: 'landscape', unit: 'mm', format: 'a4' });
-    const title = state.tab === 'Historial' ? 'Historial de inspecciones' : `Reporte de inspección · ${state.tab === 'General' ? 'General' : areaTitle(state.tab)}`;
-    pdf.setFillColor(23, 78, 61); pdf.rect(0, 0, 297, 40, 'F');
-    pdf.setTextColor(255, 255, 255); pdf.setFont('helvetica', 'bold'); pdf.setFontSize(15); pdf.text('EXPALSA · SISTEMA DE GESTIÓN DE CALIDAD', 14, 15);
-    pdf.setFont('helvetica', 'normal'); pdf.setFontSize(11); pdf.text(title, 14, 24);
-    pdf.setTextColor(204, 218, 230); pdf.setFontSize(8); pdf.text(`Generado ${new Date().toLocaleString('es-EC')}   ·   ${rows.length} observaciones`, 14, 32);
+    const title = state.tab === 'Historial' ? 'Historial de inspecciones' : state.tab === 'General' ? 'Todas las áreas' : areaTitle(state.tab);
+    const generated = new Date().toLocaleString('es-EC', { dateStyle: 'medium', timeStyle: 'short' });
+    const palette = {
+      olive: [61, 71, 39], oliveMid: [106, 116, 68], oliveSoft: [229, 233, 218],
+      brown: [126, 91, 62], sand: [239, 231, 216], paper: [250, 248, 243],
+      ink: [55, 51, 43], muted: [117, 108, 94], line: [222, 216, 204], white: [255, 255, 255]
+    };
+    const statusColors = {
+      cumple: { fill: [224, 235, 216], text: [58, 91, 48], accent: [91, 124, 62] },
+      no_cumple: { fill: [240, 225, 216], text: [128, 72, 51], accent: [154, 91, 63] },
+      parcial: { fill: [243, 233, 208], text: [126, 94, 46], accent: [172, 132, 59] },
+      nueva: { fill: [235, 235, 225], text: [85, 89, 65], accent: [121, 124, 91] }
+    };
+    const counts = Object.fromEntries(Object.keys(STATUS).map(key => [key, rows.filter(row => row.status === key).length]));
+    let logoData = null;
+    try {
+      const response = await fetch('logoexpalsa.png');
+      if (response.ok) logoData = await dataUrl(await response.blob());
+    } catch { /* continue with the text brand if the logo is unavailable */ }
+
+    const drawHeader = () => {
+      pdf.setFillColor(...palette.olive); pdf.rect(0, 0, 297, 36, 'F');
+      pdf.setFillColor(...palette.oliveMid); pdf.rect(0, 34, 297, 2, 'F');
+      pdf.setFillColor(...palette.white); pdf.roundedRect(13, 7, 43, 21, 2, 2, 'F');
+      if (logoData) {
+        try { pdf.addImage(logoData, 'PNG', 15, 12, 39, 10, undefined, 'FAST'); } catch { /* keep the report usable without the logo */ }
+      }
+      pdf.setTextColor(...palette.white); pdf.setFont('helvetica', 'bold'); pdf.setFontSize(8);
+      pdf.text('EXPALSA  /  SISTEMA DE GESTIÓN DE CALIDAD', 64, 11);
+      pdf.setFontSize(16); pdf.text('REPORTE DE INSPECCIÓN', 64, 21);
+      pdf.setFont('helvetica', 'normal'); pdf.setFontSize(9); pdf.setTextColor(232, 229, 214);
+      pdf.text(title.toLocaleUpperCase('es-EC'), 64, 29);
+      pdf.setFont('helvetica', 'bold'); pdf.setFontSize(7); pdf.setTextColor(230, 225, 209);
+      pdf.text('INSPECCIÓN INTERNA', 283, 12, { align: 'right' });
+      pdf.setFont('helvetica', 'normal'); pdf.setFontSize(8); pdf.setTextColor(...palette.white);
+      pdf.text(dateLabel(rows[0]?.inspectedAt) === '—' ? 'Fecha no registrada' : `Inspección: ${dateLabel(rows[0]?.inspectedAt)}`, 283, 20, { align: 'right' });
+      pdf.setTextColor(230, 225, 209); pdf.setFontSize(7);
+      pdf.text(`Generado ${generated}`, 283, 28, { align: 'right' });
+    };
+    drawHeader();
+
+    const metrics = [
+      { label: 'HALLAZGOS', value: rows.length, color: palette.brown },
+      { label: 'CUMPLE', value: counts.cumple, color: statusColors.cumple.accent },
+      { label: 'NO CUMPLE', value: counts.no_cumple, color: statusColors.no_cumple.accent },
+      { label: 'PARCIAL', value: counts.parcial, color: statusColors.parcial.accent },
+      { label: 'NUEVAS', value: counts.nueva, color: statusColors.nueva.accent }
+    ];
+    const metricGap = 3, metricX = 14, metricY = 41, metricH = 18;
+    const metricW = (269 - metricGap * (metrics.length - 1)) / metrics.length;
+    metrics.forEach((metric, index) => {
+      const x = metricX + index * (metricW + metricGap);
+      pdf.setFillColor(...palette.paper); pdf.setDrawColor(...palette.line); pdf.setLineWidth(.2);
+      pdf.roundedRect(x, metricY, metricW, metricH, 1.8, 1.8, 'FD');
+      pdf.setFillColor(...metric.color); pdf.roundedRect(x, metricY, 1.6, metricH, .8, .8, 'F');
+      pdf.setFont('helvetica', 'bold'); pdf.setFontSize(6.5); pdf.setTextColor(...palette.muted);
+      pdf.text(metric.label, x + 4, metricY + 6.5);
+      pdf.setFontSize(13); pdf.setTextColor(...palette.ink);
+      pdf.text(String(metric.value), x + metricW - 3, metricY + 14, { align: 'right' });
+    });
+    pdf.setFont('helvetica', 'bold'); pdf.setFontSize(8); pdf.setTextColor(...palette.olive);
+    pdf.text('DETALLE DE HALLAZGOS', 14, 66);
+    pdf.setDrawColor(...palette.line); pdf.setLineWidth(.35); pdf.line(14, 68, 283, 68);
+
     const imageData = new Map(), photosByKey = new Map();
     for (const row of rows) for (const photo of (row.photos || []).slice(0, 6)) photosByKey.set(photo.path || photo.previewUrl || photo.name, photo);
     await Promise.all([...photosByKey].map(async ([key, photo]) => {
@@ -398,24 +457,61 @@ async function exportPdf() {
       } catch { imageData.set(key, null); }
     }));
     pdf.autoTable({
-      startY: 45, head: [['FECHA', 'ÁREA / UBICACIÓN', 'HALLAZGO / ACCIÓN', 'DEPARTAMENTO', 'DÍAS', 'ESTADO', 'EVIDENCIA']],
-      body: rows.map(row => [dateLabel(row.inspectedAt), `${row.area} · ${row.location}`, `${row.description}${row.notes ? `\nAcción: ${row.notes}` : ''}`, row.department || '—', elapsedDays(row.notificationDate), STATUS[row.status] || '—', (row.photos || []).length ? ' ' : 'Sin fotos']),
-      theme: 'grid', styles: { font: 'helvetica', fontSize: 7.2, cellPadding: 3, textColor: [50, 68, 86], lineColor: [225, 231, 236], lineWidth: .15, minCellHeight: 31, valign: 'middle' },
-      headStyles: { fillColor: [47, 122, 90], textColor: [255, 255, 255], fontSize: 7, fontStyle: 'bold' },
-      alternateRowStyles: { fillColor: [247, 249, 250] },
-      columnStyles: { 0: { cellWidth: 22 }, 1: { cellWidth: 43 }, 2: { cellWidth: 83 }, 3: { cellWidth: 38 }, 4: { cellWidth: 15, halign: 'center' }, 5: { cellWidth: 28, halign: 'center' }, 6: { cellWidth: 43, halign: 'center' } },
+      startY: 72, showHead: 'everyPage', head: [['FECHA', 'ÁREA / UBICACIÓN', 'HALLAZGO / ACCIÓN / SEGUIMIENTO', 'RESPONSABLE', 'DÍAS', 'ESTADO', 'EVIDENCIA FOTOGRÁFICA']],
+      body: rows.map(row => [dateLabel(row.inspectedAt), `${row.area}\n${row.location}`, `${row.description}${row.notes ? `\nSeguimiento: ${row.notes}` : ''}`, row.department || '—', elapsedDays(row.notificationDate), STATUS[row.status] || '—', (row.photos || []).length ? '' : 'Sin evidencia']),
+      theme: 'grid', styles: { font: 'helvetica', fontSize: 7.4, cellPadding: 2.4, textColor: palette.ink, lineColor: palette.line, lineWidth: .2, minCellHeight: 16, valign: 'middle', overflow: 'linebreak' },
+      headStyles: { fillColor: palette.olive, textColor: palette.white, fontSize: 7, fontStyle: 'bold', halign: 'left', cellPadding: 3 },
+      alternateRowStyles: { fillColor: [248, 246, 239] },
+      columnStyles: {
+        0: { cellWidth: 22, fontSize: 7 }, 1: { cellWidth: 43, fontStyle: 'bold' }, 2: { cellWidth: 77 },
+        3: { cellWidth: 32, fontSize: 7 }, 4: { cellWidth: 18, halign: 'center' },
+        5: { cellWidth: 26, halign: 'center', fontStyle: 'bold' }, 6: { cellWidth: 50, halign: 'center', fontSize: 6.5, textColor: palette.muted }
+      },
+      margin: { top: 40, left: 14, right: 14, bottom: 18 },
+      willDrawPage: () => drawHeader(),
+      didParseCell: data => {
+        if (data.section !== 'body') return;
+        const row = rows[data.row.index];
+        if (data.column.index === 5) {
+          const color = statusColors[row?.status] || statusColors.nueva;
+          data.cell.styles.fillColor = color.fill; data.cell.styles.textColor = color.text;
+          data.cell.styles.fontStyle = 'bold'; data.cell.styles.halign = 'center';
+        }
+        if (data.column.index === 6) {
+          const photos = (row?.photos || []).slice(0, 6).filter(photo => imageData.get(photo.path || photo.previewUrl || photo.name));
+          const lines = Math.ceil(photos.length / 3);
+          data.cell.styles.minCellHeight = Math.max(16, lines ? 4.5 + lines * 10 + (lines - 1) * 1.5 : 16);
+          if (!photos.length) { data.cell.styles.fontStyle = 'italic'; data.cell.styles.textColor = palette.muted; }
+        }
+      },
       didDrawCell: data => {
         if (data.section !== 'body' || data.column.index !== 6) return;
         const photos = (rows[data.row.index]?.photos || []).slice(0, 6).filter(photo => imageData.get(photo.path || photo.previewUrl || photo.name));
         photos.forEach((photo, index) => {
-          const col = index % 3, line = Math.floor(index / 3);
-          try { pdf.addImage(imageData.get(photo.path || photo.previewUrl || photo.name), 'JPEG', data.cell.x + 2 + col * 14, data.cell.y + 2 + line * 13, 12, 10, undefined, 'FAST'); } catch { /* omit an unreadable thumbnail */ }
+          const key = photo.path || photo.previewUrl || photo.name, source = imageData.get(key);
+          const col = index % 3, line = Math.floor(index / 3), boxW = 13, boxH = 10, gapX = 1.5, gapY = 1.5;
+          const rowW = 3 * boxW + 2 * gapX, startX = data.cell.x + Math.max(2, (data.cell.width - rowW) / 2);
+          const x = startX + col * (boxW + gapX), y = data.cell.y + 2.2 + line * (boxH + gapY);
+          try {
+            pdf.setDrawColor(...palette.line); pdf.setFillColor(...palette.white); pdf.roundedRect(x, y, boxW, boxH, 1, 1, 'FD');
+            const properties = pdf.getImageProperties(source), scale = Math.min((boxW - 1) / properties.width, (boxH - 1) / properties.height);
+            const w = properties.width * scale, h = properties.height * scale, imageX = x + (boxW - w) / 2, imageY = y + (boxH - h) / 2;
+            const format = source.startsWith('data:image/png') ? 'PNG' : 'JPEG';
+            pdf.addImage(source, format, imageX, imageY, w, h, undefined, 'FAST');
+          } catch { /* omit an unreadable thumbnail */ }
         });
       },
-      margin: { left: 12, right: 12, bottom: 15 }, rowPageBreak: 'avoid'
+      rowPageBreak: 'avoid'
     });
     const pages = pdf.internal.getNumberOfPages();
-    for (let page = 1; page <= pages; page++) { pdf.setPage(page); pdf.setFontSize(7); pdf.setTextColor(127, 140, 153); pdf.text(`EXPALSA · Calidad e inocuidad`, 12, 204); pdf.text(`${page} / ${pages}`, 285, 204, { align: 'right' }); }
+    for (let page = 1; page <= pages; page++) {
+      pdf.setPage(page); pdf.setDrawColor(...palette.line); pdf.setLineWidth(.3); pdf.line(14, 199, 283, 199);
+      pdf.setFont('helvetica', 'normal'); pdf.setFontSize(7); pdf.setTextColor(...palette.muted);
+      pdf.text('EXPALSA  ·  Sistema de gestión de calidad', 14, 204);
+      pdf.setFont('helvetica', 'bold'); pdf.setTextColor(...palette.olive);
+      pdf.text(`PÁGINA ${page} DE ${pages}`, 283, 204, { align: 'right' });
+    }
+    pdf.setProperties({ title: `Reporte de inspección · ${title}`, subject: 'Inspección de instalaciones EXPALSA', author: 'EXPALSA · Sistema de gestión de calidad' });
     const slug = state.tab.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
     pdf.save(`reporte-inspeccion-${slug}-${new Date().toLocaleDateString('en-CA')}.pdf`);
   } catch (error) { showToast(`No se pudo generar el PDF: ${friendlyError(error)}`, true); }
