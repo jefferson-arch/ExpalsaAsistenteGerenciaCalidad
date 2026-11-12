@@ -209,6 +209,7 @@ function enterDemo() {
   state.user = { uid: 'demo-local', email: 'ejemplo@expalsa.local', displayName: 'Ejemplo local' };
   state.role = 'demo'; state.demo = true; state.tab = 'Inicio'; state.records = DEMO_RECORDS.map(row => ({ ...row, photos: row.photos.map(photo => ({ ...photo })) }));
   $('userEmail').textContent = 'Modo ejemplo'; $('userInitial').textContent = 'E';
+  $('updatedAtLabel').textContent = 'Ejemplo local · no se guarda en Firebase';
   $('authGate').hidden = true; $('appShell').hidden = false;
   $('resetDemoButton').hidden = false; $('logoutButton').textContent = 'Salir del ejemplo';
   setConnection(true, 'Ejemplo local · sin Firebase'); render();
