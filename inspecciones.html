@@ -43,6 +43,7 @@
         <div class="breadcrumbs"><span>EXPALSA</span><span class="crumb-slash">/</span><strong id="currentCrumb">Inicio</strong></div>
         <div class="top-actions">
           <span class="user-chip"><i id="userInitial">I</i><span id="userEmail"></span></span>
+          <span id="activeInspectionBadge" class="active-inspection-badge" hidden></span>
           <button class="button secondary" id="resetDemoButton" type="button" hidden>Recargar ejemplo</button>
           <button class="button plain" id="logoutButton" type="button">Salir</button>
         </div>
@@ -51,11 +52,13 @@
       <section class="page-content">
         <div class="page-heading">
           <div><p class="eyebrow" id="pageEyebrow">CONTROL DE INSTALACIONES</p><h1 id="pageTitle">Inicio</h1><p class="muted" id="pageDescription">Resumen de hallazgos y acciones de inspección.</p></div>
-          <div class="heading-actions"><button id="exportButton" class="button secondary" type="button"><span>↓</span> Exportar PDF</button><button id="newInspection" class="button primary" type="button"><span>＋</span> Nueva observación</button></div>
+          <div class="heading-actions"><button id="saveAreaButton" class="button secondary" type="button" hidden>Guardar pestaña</button><button id="closeInspectionButton" class="button secondary" type="button" hidden>Terminar inspección</button><button id="exportButton" class="button secondary" type="button"><span>↓</span> Exportar PDF</button><button id="newInspection" class="button primary" type="button"><span>＋</span> Nueva inspección</button></div>
         </div>
 
         <section id="dashboardView" class="view dashboard-view">
           <div class="dashboard-topline"><div><span class="live-dot"></span> HISTORIAL DE INSPECCIONES</div><span id="updatedAtLabel">Datos sincronizados con Firebase</span></div>
+          <article class="panel alert-panel"><div class="panel-heading"><div><p class="eyebrow">SEGUIMIENTO PRIORITARIO</p><h2>Alertas</h2><p class="panel-subtitle">Primero incumplimientos, luego observaciones parciales.</p></div><span id="alertTotal" class="alert-count">0</span></div><div class="table-wrap"><table class="records-table priority-table"><thead><tr><th>PRIORIDAD</th><th>INSPECCIÓN</th><th>ÁREA / UBICACIÓN</th><th>HALLAZGO</th><th>ESTADO</th><th>ACCIÓN</th></tr></thead><tbody id="alertsBody"></tbody></table></div><div id="alertsEmpty" class="inline-empty" hidden>No hay observaciones prioritarias pendientes.</div></article>
+          <article class="panel corrective-panel"><div class="panel-heading"><div><p class="eyebrow">TRAZABILIDAD</p><h2>Acciones correctivas registradas</h2></div><span id="correctionTotal" class="muted"></span></div><div class="table-wrap"><table class="records-table corrective-table"><thead><tr><th>FECHA</th><th>INSPECCIÓN / HALLAZGO</th><th>ACCIÓN Y EVIDENCIA</th><th>CAMBIO DE ESTADO</th><th>REGISTRÓ</th></tr></thead><tbody id="correctionsBody"></tbody></table></div><div id="correctionsEmpty" class="inline-empty" hidden>Todavía no hay acciones correctivas.</div></article>
           <div class="stat-grid">
             <article class="stat-card stat-total"><div class="stat-mark">▦</div><p>Hallazgos registrados</p><strong id="statTotal">0</strong><span>en todas las instalaciones</span></article>
             <article class="stat-card"><div class="stat-mark mark-green">✓</div><p>Cumple</p><strong id="statCompliant">0</strong><span>verificados</span></article>
@@ -109,6 +112,8 @@
       <div class="dialog-footer"><span id="saveHint" class="muted">Los cambios se guardan en Firebase.</span><div><button id="cancelDialog" class="button plain" type="button">Cancelar</button><button id="saveInspection" class="button primary" type="submit">Guardar observación</button></div></div>
     </form>
   </dialog>
+  <dialog id="correctionDialog" class="inspection-dialog correction-dialog"><form id="correctionForm" method="dialog"><div class="dialog-header"><div><p class="eyebrow">SEGUIMIENTO PRIORITARIO</p><h2 id="correctionTitle">Registrar acción correctiva</h2></div><button class="icon-button" id="closeCorrection" type="button" aria-label="Cerrar">×</button></div><div class="dialog-body"><p id="correctionFinding" class="correction-finding"></p><div class="form-grid"><label class="span-two">Acción correctiva aplicada<textarea id="correctionNote" maxlength="2000" required placeholder="Describe qué se corrigió y cómo se verificó"></textarea></label><label>Estado resultante<select id="correctionStatus" required><option value="cumple">Cumple</option><option value="parcial">Parcial</option></select></label></div><section class="photo-capture"><div><strong>Evidencia de corrección</strong><span>Debe adjuntarse al menos una foto.</span></div><div class="photo-actions"><label class="button photo-button" for="correctionCamera">▣ Abrir cámara<input id="correctionCamera" type="file" accept="image/*" capture="environment" multiple hidden></label><label class="button photo-button" for="correctionGallery">▧ Elegir fotos<input id="correctionGallery" type="file" accept="image/*" multiple hidden></label></div><div id="correctionPhotoPreview" class="photo-preview"></div></section></div><div class="dialog-footer"><span class="muted">El estado y la acción se guardarán juntos.</span><div><button id="cancelCorrection" class="button plain" type="button">Cancelar</button><button id="saveCorrection" class="button primary" type="submit">Guardar corrección</button></div></div></form></dialog>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 </body>
 </html>
+

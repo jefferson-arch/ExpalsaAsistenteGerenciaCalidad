@@ -1,13 +1,16 @@
 const COLLECTION = 'expalsa_calidad_inspecciones';
+const RUNS = 'expalsa_calidad_inspecciones_runs';
+const CORRECTIONS = 'expalsa_calidad_acciones_correctivas';
+const PROGRESS = 'expalsa_calidad_inspecciones_progreso';
 const AREAS = ['PLANTA', 'EXTERIORES', 'BODEGAS', 'DESECHOS', 'DESPACHO', 'SILO DE HIELO', 'OTROS'];
 const STATUS = { cumple: 'Cumple', no_cumple: 'No cumple', parcial: 'Parcial', nueva: 'Nueva observación' };
 const LOCATIONS = {
-  PLANTA: ['Vestidores / Ingreso a Planta', 'Recepción de materia prima', 'Descabezado (Planta baja)', 'Lavado de materiales', 'Precajas #1', 'Máquinas clasificadoras', 'Lavado de gavetas y canastillas', 'Brines #1 y #2', 'Brines #3, #4 y #5', 'Cuarto de salmuera', 'Precámara', 'Cámaras #1, #2 y #3', 'Cámaras #4, #5 y #6', 'Túneles', 'Decorado', 'Laboratorio de recepción'],
-  EXTERIORES: ['Comedor', 'Lavandería', 'Baños del personal', 'Baño de mujeres de máquinas clasificadoras', 'Baño de mujeres de supervisoras', 'Baño de hombres', 'Pre-cajas #2', 'Exteriores de planta'],
+  PLANTA: ['Vestidores / Ingreso a Planta', 'Recepción', 'Recepción de Materia Prima', 'Recepción, Tolva #5', 'Descabezado', 'Descabezado (Planta baja)', 'Lavado de Materiales', 'Lavado de gavetas y canastillas', 'Pre-cajas 2', 'Precajas #1', 'Máquina 2', 'Máquina 5', 'Máquina 5, 7 y 9', 'Máquina 7', 'Máquina 7 y 9', 'Máquina 9', 'Máquina 10', 'Máquinas 10', 'Máquinas 6, 8 y 2', 'Máquinas 6, 8, 2 y 10', 'Máquinas 7, 5 y 9', 'Brine #1 y 2', 'Brine 3, 4 y 5', 'Brine 4', 'Cuarto de salmuera Brine #1 y 2', 'Cuarto de salmuera Brine 3-4-5', 'Cámaras 1, 2 y 3', 'Cámaras 4, 5 y 6', 'Pasillo de los túneles', 'Puesto de supervisor de túneles', 'Precámara', 'Decorado'],
+  EXTERIORES: ['Comedor', 'Lavandería', 'Baños del personal', 'Baños', 'Baño de mujeres', 'Baño de mujeres de máquinas clasificadora', 'Baño de mujeres de supervisoras', 'Baño de hombres', 'Baño de hombres de mantenimiento', 'Baño de mantenimiento', 'Exteriores'],
   BODEGAS: ['Bodega de materiales', 'Bodega de químicos y repuestos', 'Bodega de metabisulfito'],
-  DESECHOS: ['Brines #1 y #2', 'Cámaras #1, #2 y #3', 'Lavado de gavetas y bines', 'Área de disposición de desechos'],
-  DESPACHO: ['Lavado de gavetas y bines', 'Muelle de despacho'],
-  'SILO DE HIELO': ['Silo de hielo 2', 'Silo de hielo 3', 'Silo de hielo 4', 'Silo de hielo 3-4'],
+  DESECHOS: ['Baños', 'Brine #1 y 2', 'Cámaras 1', 'Cámaras 1, 2 y 3', 'Máquinas 6, 8 y 2', 'Lavado de gavetas y bines', 'Área de disposición de desechos'],
+  DESPACHO: ['Lavado de Bines', 'Lavado de Gavetas, Bines', 'Muelle 2 Cámaras 4, 5 y 6', 'Muelle de Cámaras 1, 2 y 3', 'Muelle de despacho'],
+  'SILO DE HIELO': ['Silo de Hielo', 'Silo de Hielo 2', 'Silo de Hielo 3', 'Silo de Hielo 3-4', 'Silo de Hielo 4', 'Silo de Hielo 5'],
   OTROS: ['Laboratorio de recepción', 'Servicios generales', 'Planta de agua', 'Otra área']
 };
 let demoRecordsPromise;
@@ -23,7 +26,7 @@ const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&':
 const dateLabel = value => value ? new Date(`${value}T12:00:00`).toLocaleDateString('es-EC', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
 const elapsedDays = value => value ? Math.floor((Date.UTC(new Date().getFullYear(), new Date().getMonth(), new Date().getDate()) - Date.parse(`${value}T00:00:00Z`)) / 86400000) : '—';
 const daysOpen = row => Number.isFinite(row.daysOpenSnapshot) ? row.daysOpenSnapshot : elapsedDays(row.notificationDate);
-const state = { user: null, role: '', demo: false, tab: 'Inicio', selectedInspectionDate: null, records: [], unsubscribe: null, pendingPhotos: [], editingPhotos: [], toastTimer: null };
+const state = { user: null, role: '', demo: false, tab: 'Inicio', selectedInspectionDate: null, selectedInspectionId: null, activeInspectionId: null, activeInspectionNumber: null, records: [], inspectionRuns: [], corrections: [], progress: {}, unsubscribe: null, pendingPhotos: [], editingPhotos: [], correctionPhotos: [], correctingObservationId: null, toastTimer: null };
 let firebaseApi;
 let inspectionModulesPromise;
 let pdfLibrariesPromise;
@@ -96,37 +99,64 @@ function recordsForView() {
   return [...records].sort((a, b) => $('filterOrder').value === 'asc' ? a.inspectedAt.localeCompare(b.inspectedAt) : b.inspectedAt.localeCompare(a.inspectedAt));
 }
 
-function inspectionNumber(date) { return date ? `INS-${date.replace(/\D/g, '')}` : 'INS-SF-001'; }
+function userLabel(user = state.user) {
+  const email = String(user?.email || '').toLowerCase();
+  if (email === 'jefferson@expalsaevaluations.com') return 'Jefferson Figueroa';
+  if (email === 'fabio@expalsaevaluations.com') return 'Fabio';
+  if (email === 'karina@expalsaevaluations.com') return 'Karina';
+  return user?.displayName || email.split('@')[0] || 'Inspector';
+}
+
+function inspectionNumber(value) {
+  if (value && typeof value === 'object') return value.inspectionNumber || `INS-${String(value.inspectedAt || '').replace(/\D/g, '')}`;
+  return value ? `INS-${String(value).replace(/\D/g, '')}` : 'INS-SF-001';
+}
 
 function groupInspections(records) {
   const groups = new Map();
-  for (const record of records) {
-    const key = record.inspectedAt || '';
-    if (!groups.has(key)) groups.set(key, { date: key, rows: [], areas: new Set(), statuses: Object.fromEntries(Object.keys(STATUS).map(status => [status, 0])) });
-    const group = groups.get(key);
-    group.rows.push(record); group.areas.add(record.area);
-    if (group.statuses[record.status] !== undefined) group.statuses[record.status]++;
+  for (const run of state.inspectionRuns) {
+    const rows = records.filter(row => row.inspectionId === run.id);
+    groups.set(run.id, { id: run.id, run, date: run.inspectedAt || '', rows, areas: new Set(rows.map(row => row.area)), statuses: Object.fromEntries(Object.keys(STATUS).map(status => [status, rows.filter(row => row.status === status).length])) });
   }
-  return [...groups.values()].sort((a, b) => $('filterOrder').value === 'asc' ? a.date.localeCompare(b.date) : b.date.localeCompare(a.date));
+  const legacy = new Map();
+  for (const row of records.filter(item => !item.inspectionId)) {
+    const key = row.inspectedAt || '';
+    if (!legacy.has(key)) legacy.set(key, { id: `legacy:${key}`, date: key, rows: [], areas: new Set(), statuses: Object.fromEntries(Object.keys(STATUS).map(status => [status, 0])), run: { status: 'terminada' } });
+    const group = legacy.get(key); group.rows.push(row); group.areas.add(row.area); if (group.statuses[row.status] !== undefined) group.statuses[row.status]++;
+  }
+  for (const [id, group] of legacy) groups.set(id, group);
+  const values = [...groups.values()].filter(group => group.rows.length || !activeFilterCount());
+  return values.sort((a, b) => $('filterOrder').value === 'asc' ? a.date.localeCompare(b.date) : b.date.localeCompare(a.date));
 }
 
 function render() {
   if (!state.user) return;
   drawNavigation();
   const selected = SECTIONS.find(item => item.id === state.tab) || SECTIONS[0];
-  const selectedInspection = state.tab === 'Historial' && state.selectedInspectionDate !== null;
-  const inspectionRows = selectedInspection ? recordsForView().filter(row => (row.inspectedAt || '') === state.selectedInspectionDate) : [];
-  const number = selectedInspection ? inspectionNumber(state.selectedInspectionDate) : '';
+  const selectedInspection = state.tab === 'Historial' && (state.selectedInspectionId !== null || state.selectedInspectionDate !== null);
+  const selectedRun = state.inspectionRuns.find(run => run.id === state.selectedInspectionId);
+  const selectedInspectionDate = selectedRun?.inspectedAt || state.selectedInspectionDate;
+  const inspectionRows = selectedInspection ? recordsForView().filter(row => selectedRun ? row.inspectionId === selectedRun.id : (row.inspectedAt || '') === state.selectedInspectionDate) : [];
+  const number = selectedInspection ? selectedRun ? inspectionNumber(selectedRun) : inspectionNumber(state.selectedInspectionDate) : '';
   $('currentCrumb').textContent = selectedInspection ? number : selected.title;
   $('pageTitle').textContent = selectedInspection ? number : selected.title;
   $('pageDescription').textContent = selectedInspection
-    ? `${state.selectedInspectionDate ? dateLabel(state.selectedInspectionDate) : 'Fecha no registrada'} · ${inspectionRows.length} hallazgos · detalle por área`
+    ? `${selectedInspectionDate ? dateLabel(selectedInspectionDate) : 'Fecha no registrada'} · ${inspectionRows.length} hallazgos · ${selectedRun?.status === 'en_curso' ? 'En curso' : 'Terminada'} · detalle por área`
     : selected.description;
   $('pageEyebrow').textContent = state.tab === 'Historial' ? 'CONSULTA Y SEGUIMIENTO' : 'CONTROL DE INSTALACIONES';
   $('dashboardView').hidden = state.tab !== 'Inicio';
   $('listView').hidden = state.tab === 'Inicio';
   $('listScope').textContent = selectedInspection ? 'Detalle de inspección' : state.tab === 'Historial' ? 'Inspecciones por fecha' : AREAS.includes(state.tab) ? selected.title : 'Todas las áreas';
   $('backToHistory').hidden = !selectedInspection;
+  const activeRun = state.inspectionRuns.find(run => run.id === state.activeInspectionId);
+  const active = state.demo ? !!state.activeInspectionId : activeRun?.status === 'en_curso';
+  $('activeInspectionBadge').hidden = !active;
+  $('activeInspectionBadge').textContent = active ? `${state.activeInspectionNumber || inspectionNumber(activeRun)} · EN CURSO` : '';
+  $('saveAreaButton').hidden = !AREAS.includes(state.tab) || !active;
+  $('closeInspectionButton').hidden = !active;
+  const savedArea = state.progress[`${state.activeInspectionId}:${state.tab}`];
+  $('saveAreaButton').textContent = savedArea ? `Guardado ✓ · ${savedArea.savedByName || userLabel()}` : 'Guardar pestaña';
+  $('newInspection').textContent = ['Inicio', 'Historial'].includes(state.tab) ? '＋ Nueva inspección' : '＋ Nueva observación';
   const filtered = recordsForView();
   if (state.tab === 'Historial' && !selectedInspection) {
     const groups = groupInspections(filtered);
@@ -135,20 +165,23 @@ function render() {
     $('recordsBody').innerHTML = groups.map(group => {
       const statusSummary = Object.entries(group.statuses).filter(([, count]) => count).map(([status, count]) => `<span class="status-pill status-${escapeHtml(status)}">${escapeHtml(STATUS[status])}: ${count}</span>`).join(' ');
       const areas = [...group.areas].map(areaTitle).join(' · ');
-      return `<tr class="inspection-group-row"><td><strong class="inspection-number">${escapeHtml(inspectionNumber(group.date))}</strong></td><td><strong>${escapeHtml(group.date ? dateLabel(group.date) : 'Sin fecha registrada')}</strong></td><td>${escapeHtml(areas || '—')}</td><td><strong>${group.rows.length}</strong></td><td><div class="inspection-statuses">${statusSummary}</div></td><td><button class="button secondary open-inspection" data-open-inspection="${escapeHtml(group.date)}" type="button">Abrir detalle <span aria-hidden="true">→</span></button></td></tr>`;
+      const groupNumber = group.run.id?.startsWith('demo-') ? inspectionNumber(group.run) : group.run.inspectionNumber ? inspectionNumber(group.run) : inspectionNumber(group.date);
+      const statusText = group.run.status === 'en_curso' ? '<span class="run-status run-open">En curso</span>' : '<span class="run-status run-closed">Terminada</span>';
+      return `<tr class="inspection-group-row"><td><strong class="inspection-number">${escapeHtml(groupNumber)}</strong></td><td><strong>${escapeHtml(group.date ? dateLabel(group.date) : 'Sin fecha registrada')}</strong><div>${statusText}</div></td><td>${escapeHtml(areas || '—')}</td><td><strong>${group.rows.length}</strong></td><td><div class="inspection-statuses">${statusSummary}</div></td><td><button class="button secondary open-inspection" data-open-inspection="${escapeHtml(group.id)}" type="button">${group.run.status === 'en_curso' ? 'Continuar' : 'Abrir detalle'} <span aria-hidden="true">→</span></button></td></tr>`;
     }).join('');
   } else {
     const detailRows = selectedInspection ? inspectionRows : filtered;
     $('resultCount').textContent = `${detailRows.length} ${detailRows.length === 1 ? 'observación' : 'observaciones'}`;
-    $('recordsHead').innerHTML = '<tr><th>FECHA / ÁREA</th><th>HALLAZGO</th><th>RESPONSABLE</th><th>DÍAS ABIERTOS</th><th>ESTADO</th><th>EVIDENCIA</th><th></th></tr>';
+    $('recordsHead').innerHTML = '<tr><th>FECHA / ÁREA</th><th>HALLAZGO</th><th>RESPONSABLE</th><th>REGISTRÓ</th><th>DÍAS ABIERTOS</th><th>ESTADO</th><th>EVIDENCIA</th><th></th></tr>';
     $('recordsBody').innerHTML = detailRows.map(row => `<tr>
       <td><div class="date-area"><strong>${escapeHtml(dateLabel(row.inspectedAt))}</strong><span>${escapeHtml(areaTitle(row.area))}${row.sourceSection ? ` · ${escapeHtml(row.sourceSection)}` : ''} · ${escapeHtml(row.location)}</span></div></td>
       <td><span class="finding-title">${escapeHtml(row.description)}</span>${row.notes ? `<span class="finding-note">${escapeHtml(row.notes)}</span>` : ''}</td>
       <td class="department-cell">${escapeHtml(row.department || '—')}</td>
+      <td class="department-cell">${escapeHtml(row.inspectorName || row.createdByName || '—')}</td>
       <td>${escapeHtml(daysOpen(row))}</td>
       <td><span class="status-pill status-${escapeHtml(row.status)}">${escapeHtml(STATUS[row.status] || 'Sin estado')}</span></td>
       <td><span class="photo-count">${(row.photos || []).length ? `▧ ${(row.photos || []).length} foto${row.photos.length > 1 ? 's' : ''}` : '—'}</span></td>
-      <td><button class="row-actions" data-edit="${escapeHtml(row.id)}" type="button" aria-label="Editar observación">↗</button></td>
+      <td><button class="row-actions" data-edit="${escapeHtml(row.id)}" type="button" aria-label="${row.status === 'no_cumple' || row.status === 'parcial' ? 'Registrar acción correctiva' : 'Ver observación'}">${row.status === 'no_cumple' || row.status === 'parcial' ? '⚑' : '↗'}</button></td>
     </tr>`).join('');
   }
   const visibleCount = $('recordsBody').children.length;
@@ -186,6 +219,14 @@ function renderDashboard() {
   }).join('');
   const recent = [...rows].sort((a, b) => b.inspectedAt.localeCompare(a.inspectedAt)).slice(0, 5);
   $('recentRows').innerHTML = recent.length ? `<div class="recent-list">${recent.map(row => `<div class="recent-row"><span class="recent-date">${escapeHtml(dateLabel(row.inspectedAt))}</span><span class="recent-finding">${escapeHtml(row.description)}</span><span class="recent-location">${escapeHtml(row.area)} · ${escapeHtml(row.location)}</span><span class="status-pill status-${escapeHtml(row.status)}">${escapeHtml(STATUS[row.status] || '')}</span><button class="row-actions" type="button" data-edit="${escapeHtml(row.id)}" aria-label="Editar observación">↗</button></div>`).join('')}</div>` : '<div class="empty-state"><div class="empty-glyph">▧</div><h3>Tu historial empieza aquí</h3><p>Las observaciones guardadas aparecerán en este resumen.</p></div>';
+  const priorities = rows.filter(row => row.status === 'no_cumple' || row.status === 'parcial').sort((a, b) => (a.status === b.status ? (b.inspectedAt || '').localeCompare(a.inspectedAt || '') : a.status === 'no_cumple' ? -1 : 1));
+  $('alertTotal').textContent = priorities.length;
+  $('alertsBody').innerHTML = priorities.map(row => `<tr><td><span class="priority-mark ${row.status === 'no_cumple' ? 'priority-high' : 'priority-medium'}">${row.status === 'no_cumple' ? 'Alta' : 'Media'}</span></td><td><strong>${escapeHtml(row.inspectionNumber || inspectionNumber(row.inspectedAt))}</strong></td><td>${escapeHtml(areaTitle(row.area))}<span class="table-secondary">${escapeHtml(row.sourceSection ? `${row.sourceSection} · ` : '')}${escapeHtml(row.location)}</span></td><td><span class="finding-title">${escapeHtml(row.description)}</span></td><td><span class="status-pill status-${escapeHtml(row.status)}">${escapeHtml(STATUS[row.status])}</span></td><td><button class="button corrective-action-button" data-correct="${escapeHtml(row.id)}" type="button">Registrar corrección</button></td></tr>`).join('');
+  $('alertsEmpty').hidden = priorities.length > 0;
+  const actions = state.corrections;
+  $('correctionTotal').textContent = `${actions.length} ${actions.length === 1 ? 'acción' : 'acciones'}`;
+  $('correctionsBody').innerHTML = actions.map(action => { const actionDate = action.createdAt?.toDate?.(); return `<tr><td>${escapeHtml(actionDate ? actionDate.toLocaleDateString('es-EC') : dateLabel(action.actionDate))}</td><td><strong>${escapeHtml(action.inspectionNumber || '—')}</strong><span class="table-secondary">${escapeHtml(areaTitle(action.area))} · ${escapeHtml(action.location || '')}</span><span class="table-secondary">${escapeHtml(action.description || '')}</span></td><td><span class="finding-title">${escapeHtml(action.note || '')}</span><span class="table-secondary">${(action.photos || []).length} evidencia${(action.photos || []).length === 1 ? '' : 's'}</span></td><td><span class="status-pill status-${escapeHtml(action.previousStatus)}">${escapeHtml(STATUS[action.previousStatus] || '')}</span> → <span class="status-pill status-${escapeHtml(action.newStatus)}">${escapeHtml(STATUS[action.newStatus] || '')}</span></td><td>${escapeHtml(action.byName || '—')}</td></tr>`; }).join('');
+  $('correctionsEmpty').hidden = actions.length > 0;
 }
 
 function areaTitle(area) { return area === 'SILO DE HIELO' ? 'Silo de hielo' : area ? area[0] + area.slice(1).toLowerCase() : ''; }
@@ -204,7 +245,9 @@ async function verifyRole(user) {
   const accessSnapshot = await getDoc(doc(db, 'expalsa_calidad_accesos', user.uid));
   if (accessSnapshot.exists()) {
     const access = accessSnapshot.data();
-    if (access.active === true && access.deleted !== true && String(access.email).toLowerCase() === String(user.email).toLowerCase()) return 'inspector';
+    if (access.active === true && access.deleted !== true && String(access.email).toLowerCase() === String(user.email).toLowerCase()) {
+      return ['fabio@expalsaevaluations.com', 'karina@expalsaevaluations.com'].includes(String(user.email).toLowerCase()) ? 'admin' : 'inspector';
+    }
   }
   throw new Error('La cuenta requiere aprobación del administrador de EXPALSA Calidad.');
 }
@@ -212,18 +255,23 @@ async function verifyRole(user) {
 function startRecordsListener() {
   const { db, collection, onSnapshot } = firebaseApi;
   if (state.unsubscribe) state.unsubscribe();
-  state.unsubscribe = onSnapshot(collection(db, COLLECTION), snapshot => {
-    state.records = snapshot.docs.map(item => ({ id: item.id, ...item.data() }));
-    state.records.sort((a, b) => (b.inspectedAt || '').localeCompare(a.inspectedAt || ''));
+  const stops = [];
+  const listen = (name, onData) => stops.push(onSnapshot(collection(db, name), snapshot => {
+    onData(snapshot.docs.map(item => ({ id: item.id, ...item.data() })));
     setConnection(true, 'Datos sincronizados con Firebase');
     $('updatedAtLabel').textContent = `Actualizado ${new Date().toLocaleTimeString('es-EC', { hour: '2-digit', minute: '2-digit' })}`;
     render();
-  }, error => { setConnection(false, 'Sin acceso a los datos'); showToast(friendlyError(error), true); });
+  }, error => { setConnection(false, 'Sin acceso a los datos'); showToast(friendlyError(error), true); }));
+  listen(COLLECTION, rows => { state.records = rows.sort((a, b) => (b.inspectedAt || '').localeCompare(a.inspectedAt || '')); });
+  listen(RUNS, rows => { state.inspectionRuns = rows.sort((a, b) => (b.inspectedAt || '').localeCompare(a.inspectedAt || '')); });
+  listen(CORRECTIONS, rows => { state.corrections = rows.sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0)); });
+  listen(PROGRESS, rows => { state.progress = Object.fromEntries(rows.map(row => [`${row.inspectionId}:${row.area}`, row])); });
+  state.unsubscribe = () => stops.forEach(stop => stop());
 }
 
 function startApp(user, role) {
   state.user = user; state.role = role; state.demo = false;
-  $('userEmail').textContent = user.email || 'Inspector';
+  $('userEmail').textContent = userLabel(user);
   $('userInitial').textContent = (user.email || 'I').charAt(0).toUpperCase();
   $('resetDemoButton').hidden = true;
   $('logoutButton').textContent = 'Salir';
@@ -251,8 +299,11 @@ async function enterDemo() {
   try {
     const records = await loadDemoRecords();
     if (state.unsubscribe) state.unsubscribe(); state.unsubscribe = null;
+    const demoRun = { id: 'demo-run-20260912', inspectionNumber: 'INS-20260912-DEMO', inspectedAt: '2026-09-12', status: 'terminada', openedByName: 'Anthony Cobos y Michelle Loor', openedByEmail: 'calidad@expalsa.local', participants: ['Anthony Cobos', 'Michelle Loor'] };
     state.user = { uid: 'demo-local', email: 'ejemplo@expalsa.local', displayName: 'Ejemplo local' };
-    state.role = 'demo'; state.demo = true; state.tab = 'Inicio'; state.selectedInspectionDate = null; state.records = records;
+    state.role = 'demo'; state.demo = true; state.tab = 'Inicio'; state.selectedInspectionDate = null; state.selectedInspectionId = null;
+    state.activeInspectionId = null; state.activeInspectionNumber = null; state.inspectionRuns = [demoRun]; state.corrections = []; state.progress = {};
+    state.records = records.map(row => ({ ...row, inspectionId: demoRun.id, inspectionNumber: demoRun.inspectionNumber }));
     $('userEmail').textContent = 'Modo ejemplo'; $('userInitial').textContent = 'E';
     $('updatedAtLabel').textContent = 'Ejemplo local · 158 hallazgos · no se guarda en Firebase';
     $('authGate').hidden = true; $('appShell').hidden = false;
@@ -268,15 +319,69 @@ async function enterDemo() {
 async function resetDemo() {
   if (!state.demo) return;
   try {
-    state.records = await loadDemoRecords(); state.tab = 'Inicio'; state.selectedInspectionDate = null;
+    const records = await loadDemoRecords(); state.tab = 'Inicio'; state.selectedInspectionDate = null; state.selectedInspectionId = null; state.activeInspectionId = null; state.activeInspectionNumber = null; state.corrections = []; state.progress = {};
+    state.inspectionRuns = [{ id: 'demo-run-20260912', inspectionNumber: 'INS-20260912-DEMO', inspectedAt: '2026-09-12', status: 'terminada', openedByName: 'Anthony Cobos y Michelle Loor', openedByEmail: 'calidad@expalsa.local', participants: ['Anthony Cobos', 'Michelle Loor'] }];
+    state.records = records.map(row => ({ ...row, inspectionId: state.inspectionRuns[0].id, inspectionNumber: state.inspectionRuns[0].inspectionNumber }));
     $('quickSearch').value = '';
     for (const id of ['filterStatus', 'filterDepartment', 'filterFrom', 'filterTo']) $(id).value = '';
     $('filterOrder').value = 'desc'; render(); showToast('Ejemplo completo recargado.');
   } catch (error) { showToast(error.message || 'No se pudo recargar el ejemplo.', true); }
 }
 
+async function createInspection(area = 'PLANTA', openForm = true) {
+  const inspectedAt = new Date().toLocaleDateString('en-CA');
+  const name = userLabel();
+  if (state.demo) {
+    const id = `demo-run-${crypto.randomUUID()}`;
+    const run = { id, inspectionNumber: `INS-${inspectedAt.replace(/\D/g, '')}-${id.slice(-4).toUpperCase()}`, inspectedAt, status: 'en_curso', openedByUid: state.user.uid, openedByEmail: state.user.email, openedByName: name, participants: [name] };
+    state.inspectionRuns.unshift(run); state.activeInspectionId = id; state.activeInspectionNumber = run.inspectionNumber;
+  } else {
+    const { db, doc, collection, setDoc, serverTimestamp } = firebaseApi;
+    const runRef = doc(collection(db, RUNS));
+    const inspectionNo = `INS-${inspectedAt.replace(/\D/g, '')}-${runRef.id.slice(0, 5).toUpperCase()}`;
+    const run = { inspectionNumber: inspectionNo, inspectedAt, status: 'en_curso', openedByUid: state.user.uid, openedByEmail: state.user.email, openedByName: name, participants: [name], createdBy: state.user.uid, createdByName: name, createdAt: serverTimestamp(), updatedBy: state.user.uid, updatedByName: name, updatedAt: serverTimestamp() };
+    await setDoc(runRef, run);
+    state.inspectionRuns.unshift({ id: runRef.id, ...run, inspectionNumber: inspectionNo });
+    state.activeInspectionId = runRef.id; state.activeInspectionNumber = inspectionNo;
+  }
+  state.tab = area; state.selectedInspectionId = null; state.selectedInspectionDate = null; render();
+  if (openForm) openNewDialog(area);
+  else showToast(`Inspección ${state.activeInspectionNumber} iniciada.`);
+}
+
+async function closeInspection() {
+  const run = state.inspectionRuns.find(item => item.id === state.activeInspectionId);
+  if (!run || run.status !== 'en_curso') return;
+  try {
+    const name = userLabel();
+    if (state.demo) run.status = 'terminada';
+    else {
+      const { db, doc, updateDoc, serverTimestamp } = firebaseApi;
+      await updateDoc(doc(db, RUNS, run.id), { status: 'terminada', closedAt: serverTimestamp(), closedByUid: state.user.uid, closedByName: name, updatedAt: serverTimestamp(), updatedBy: state.user.uid, updatedByName: name, participants: firebaseApi.arrayUnion(name) });
+      run.status = 'terminada';
+    }
+    state.activeInspectionId = null; state.activeInspectionNumber = null; render(); showToast(`Inspección ${inspectionNumber(run)} terminada.`);
+  } catch (error) { showToast(friendlyError(error), true); }
+}
+
+async function saveAreaProgress() {
+  const run = state.inspectionRuns.find(item => item.id === state.activeInspectionId);
+  if (!run || run.status !== 'en_curso') { showToast('Abre una inspección en curso para guardar esta pestaña.', true); return; }
+  const area = state.tab, name = userLabel();
+  try {
+    if (state.demo) state.progress[`${run.id}:${area}`] = { inspectionId: run.id, area, savedByName: name, savedAt: new Date() };
+    else {
+      const { db, doc, setDoc, serverTimestamp } = firebaseApi;
+      const ref = doc(db, PROGRESS, `${run.id}_${area.replaceAll(' ', '-')}`);
+      await setDoc(ref, { inspectionId: run.id, inspectionNumber: run.inspectionNumber, area, savedByUid: state.user.uid, savedByEmail: state.user.email, savedByName: name, savedAt: serverTimestamp() });
+      state.progress[`${run.id}:${area}`] = { inspectionId: run.id, area, savedByName: name, savedAt: new Date() };
+    }
+    render(); showToast(`${areaTitle(area)} guardada. Las observaciones quedan asociadas a ${run.inspectionNumber}.`);
+  } catch (error) { showToast(friendlyError(error), true); }
+}
+
 function exitDemo() {
-  state.demo = false; state.user = null; state.records = []; state.tab = 'Inicio';
+  state.demo = false; state.user = null; state.records = []; state.inspectionRuns = []; state.corrections = []; state.progress = {}; state.activeInspectionId = null; state.activeInspectionNumber = null; state.selectedInspectionId = null; state.tab = 'Inicio';
   $('appShell').hidden = true; $('authGate').hidden = false;
   $('resetDemoButton').hidden = true; $('logoutButton').textContent = 'Salir';
   setConnection(false, 'Conexión pendiente');
@@ -369,24 +474,99 @@ async function handlePhotoFiles(input) {
   drawPhotoPreview();
 }
 
+function drawCorrectionPhotoPreview() {
+  $('correctionPhotoPreview').innerHTML = state.correctionPhotos.map((photo, index) => `<div class="photo-thumb"><img src="${escapeHtml(photo.preview)}" alt="Evidencia de corrección ${index + 1}"><button type="button" data-remove-correction-photo="${index}" aria-label="Quitar foto">×</button></div>`).join('');
+}
+
+async function handleCorrectionPhotoFiles(input) {
+  const files = [...(input.files || [])]; input.value = '';
+  if (!files.length) return;
+  const available = 6 - state.correctionPhotos.length;
+  for (const file of files.slice(0, Math.max(0, available))) {
+    if (!file.type.startsWith('image/')) continue;
+    try { const blob = await fileAsJpeg(file); state.correctionPhotos.push({ blob, preview: await dataUrl(blob), origin: input.id === 'correctionCamera' ? 'camera' : 'gallery', name: file.name || 'correccion.jpg' }); }
+    catch (error) { showToast(friendlyError(error), true); }
+  }
+  if (files.length > available) showToast('Cada acción correctiva admite hasta 6 fotos.');
+  drawCorrectionPhotoPreview();
+}
+
+function openCorrectionDialog(id) {
+  const row = state.records.find(item => item.id === id);
+  if (!row || !['no_cumple', 'parcial'].includes(row.status)) return;
+  state.correctingObservationId = id; state.correctionPhotos = [];
+  $('correctionTitle').textContent = `Corregir ${row.inspectionNumber || inspectionNumber(row.inspectedAt)}`;
+  $('correctionFinding').textContent = `${areaTitle(row.area)} · ${row.location}: ${row.description}`;
+  $('correctionStatus').value = 'cumple';
+  $('correctionNote').value = ''; drawCorrectionPhotoPreview(); $('correctionDialog').showModal();
+}
+
+async function saveCorrection(event) {
+  event.preventDefault();
+  const row = state.records.find(item => item.id === state.correctingObservationId);
+  const note = $('correctionNote').value.trim(), newStatus = $('correctionStatus').value;
+  if (!row || !note) { $('correctionForm').reportValidity(); return; }
+  if (!state.correctionPhotos.length) { showToast('Adjunta al menos una foto de la corrección.', true); return; }
+  if (newStatus === row.status) { showToast('Selecciona un estado distinto al actual.', true); return; }
+  const button = $('saveCorrection'); button.disabled = true; button.textContent = 'Guardando…';
+  try {
+    const actionId = `local-${crypto.randomUUID()}`, name = userLabel(), date = new Date().toLocaleDateString('en-CA');
+    const action = { id: actionId, inspectionId: row.inspectionId || row.id, inspectionNumber: row.inspectionNumber || inspectionNumber(row.inspectedAt), observationId: row.id, area: row.area, location: row.location, description: row.description, previousStatus: row.status, newStatus, note, photos: [], byUid: state.user.uid, byName: name, byEmail: state.user.email, actionDate: date };
+    if (state.demo) {
+      action.photos = state.correctionPhotos.map(photo => ({ preview: photo.preview, name: photo.name }));
+      row.status = newStatus; row.lastCorrectionId = actionId; row.updatedByName = name;
+      state.corrections.unshift(action);
+    } else {
+      const { db, doc, collection, ref, uploadBytes, serverTimestamp, runTransaction } = firebaseApi;
+      const storageRunId = row.inspectionId || row.id;
+      for (const file of state.correctionPhotos) {
+        const path = `expalsa_inspecciones/${state.user.uid}/${storageRunId}/${crypto.randomUUID()}.jpg`;
+        await uploadBytes(ref(firebaseApi.storage, path), file.blob, { contentType: 'image/jpeg', customMetadata: { origin: file.origin, uploadedBy: state.user.uid } });
+        action.photos.push({ path, name: file.name.slice(0, 120), uploadedBy: state.user.uid, origin: file.origin });
+      }
+      const observationRef = doc(db, COLLECTION, row.id), actionRef = doc(collection(db, CORRECTIONS));
+      await runTransaction(db, async transaction => {
+        const snapshot = await transaction.get(observationRef);
+        if (!snapshot.exists() || !['no_cumple', 'parcial'].includes(snapshot.data().status)) throw new Error('La alerta ya fue actualizada por otro usuario. Recarga e inténtalo de nuevo.');
+        const previousStatus = snapshot.data().status;
+        if (newStatus === previousStatus) throw new Error('Esta observación ya tiene el estado seleccionado.');
+        transaction.update(observationRef, { status: newStatus, lastCorrectionId: actionRef.id, lastCorrectionNote: note, updatedBy: state.user.uid, updatedByName: name, updatedAt: serverTimestamp() });
+        const { id: ignoredId, actionDate: ignoredDate, ...actionData } = action;
+        transaction.set(actionRef, { ...actionData, previousStatus, createdBy: state.user.uid, createdByName: name, createdAt: serverTimestamp() });
+      });
+    }
+    $('correctionDialog').close(); state.correctionPhotos = []; state.correctingObservationId = null; render(); showToast(`Acción correctiva guardada. Estado actualizado a ${STATUS[newStatus]}.`);
+  } catch (error) { showToast(friendlyError(error), true); }
+  finally { button.disabled = false; button.textContent = 'Guardar corrección'; }
+}
+
 function openNewDialog(area = AREAS.includes(state.tab) ? state.tab : 'PLANTA') {
+  if (!state.activeInspectionId) {
+    if (state.demo) { createInspection(area, true); return; }
+    showToast('Inicia una inspección antes de agregar observaciones.', true); return;
+  }
   const form = $('inspectionForm'); form.reset(); form.elements.id.value = '';
   form.elements.area.value = area; fillLocationOptions(area); fillDepartment();
-  form.elements.inspectedAt.value = new Date().toLocaleDateString('en-CA'); form.elements.status.value = 'nueva';
+  const run = state.inspectionRuns.find(item => item.id === state.activeInspectionId);
+  form.elements.inspectedAt.value = run?.inspectedAt || new Date().toLocaleDateString('en-CA'); form.elements.inspectedAt.disabled = true; form.elements.status.value = 'nueva'; form.elements.status.disabled = false;
   state.pendingPhotos = []; state.editingPhotos = [];
   $('dialogTitle').textContent = 'Nueva observación'; $('saveInspection').textContent = 'Guardar observación';
-  $('saveHint').textContent = `Inspector: ${state.user.email || 'Cuenta autorizada'}`;
+  $('saveHint').textContent = `Inspección ${state.activeInspectionNumber || inspectionNumber(run)} · registra ${userLabel()}`;
   drawPhotoPreview(); $('inspectionDialog').showModal();
 }
 
 async function openEditDialog(id) {
   const row = state.records.find(item => item.id === id); if (!row) return;
+  if (row.status === 'no_cumple' || row.status === 'parcial') { openCorrectionDialog(id); return; }
+  const run = state.inspectionRuns.find(item => item.id === row.inspectionId);
+  if (!state.demo && (!row.inspectionId || row.inspectionId !== state.activeInspectionId || run?.status !== 'en_curso')) { showToast('Las inspecciones terminadas se pueden consultar, pero no editar.', true); return; }
   const form = $('inspectionForm'); form.reset(); form.elements.id.value = row.id;
   for (const key of ['area', 'inspectedAt', 'description', 'notificationDate', 'status', 'notes']) form.elements[key].value = row[key] || '';
+  form.elements.inspectedAt.disabled = true; form.elements.status.disabled = true;
   fillLocationOptions(row.area, row.location); fillDepartment(row.department);
   state.pendingPhotos = []; state.editingPhotos = (row.photos || []).map(photo => ({ ...photo }));
   $('dialogTitle').textContent = 'Editar observación'; $('saveInspection').textContent = 'Guardar cambios';
-  $('saveHint').textContent = `Creado por ${row.inspectorEmail || row.inspectorName || 'inspector'}`;
+  $('saveHint').textContent = `Registró ${row.inspectorName || row.inspectorEmail || 'inspector'} · edita ${userLabel()}`;
   drawPhotoPreview(); $('inspectionDialog').showModal();
   for (const [i, photo] of state.editingPhotos.entries()) {
     if (state.demo || photo.preview) continue;
@@ -409,15 +589,19 @@ async function saveInspection(event) {
     };
     const id = form.elements.id.value || (state.demo ? `demo-${crypto.randomUUID()}` : firebaseApi.doc(firebaseApi.collection(firebaseApi.db, COLLECTION)).id);
     const current = state.records.find(item => item.id === id);
+    const run = state.inspectionRuns.find(item => item.id === (current?.inspectionId || state.activeInspectionId));
+    if (!state.demo && (!run || run.status !== 'en_curso')) throw new Error('Guarda las observaciones dentro de una inspección en curso.');
+    if (run?.inspectedAt) fields.inspectedAt = run.inspectedAt;
     if (state.demo) {
       const photos = [...state.editingPhotos, ...state.pendingPhotos.map(photo => ({ preview: photo.preview, name: photo.name, origin: photo.origin }))];
-      const record = { ...fields, id, photos, source: 'ejemplo_inspeccion_2026-09-12', inspectorName: 'Ejemplo local', inspectorEmail: state.user.email, inspectorUid: state.user.uid };
+      const run = state.inspectionRuns.find(item => item.id === (current?.inspectionId || state.activeInspectionId));
+      const record = { ...current, ...fields, id, inspectionId: run?.id || current?.inspectionId, inspectionNumber: run?.inspectionNumber || current?.inspectionNumber, photos, source: current?.source || 'app', inspectorName: current?.inspectorName || userLabel(), inspectorEmail: current?.inspectorEmail || state.user.email, inspectorUid: current?.inspectorUid || state.user.uid, createdByName: current?.createdByName || userLabel(), updatedByName: userLabel() };
       const index = state.records.findIndex(item => item.id === id);
       if (index >= 0) state.records[index] = record; else state.records.unshift(record);
       $('inspectionDialog').close(); state.pendingPhotos = []; render(); showToast('Observación guardada en el ejemplo local.');
       return;
     }
-    const { db, doc, collection, setDoc, serverTimestamp, ref, uploadBytes } = firebaseApi;
+    const { db, doc, collection, setDoc, updateDoc, serverTimestamp, ref, uploadBytes, arrayUnion } = firebaseApi;
     const photos = [...state.editingPhotos];
     for (const file of state.pendingPhotos) {
       const path = `expalsa_inspecciones/${state.user.uid}/${id}/${crypto.randomUUID()}.jpg`;
@@ -425,23 +609,28 @@ async function saveInspection(event) {
       photos.push({ path, name: file.name.slice(0, 120), uploadedBy: state.user.uid, origin: file.origin });
     }
     const payload = {
-      ...fields, photos, inspectorName: current?.inspectorName || state.user.displayName || state.user.email.split('@')[0],
+      ...fields, inspectionId: current?.inspectionId || run.id, inspectionNumber: current?.inspectionNumber || run.inspectionNumber,
+      photos, inspectorName: current?.inspectorName || userLabel(), createdByName: current?.createdByName || userLabel(),
       inspectorEmail: current?.inspectorEmail || state.user.email, inspectorUid: current?.inspectorUid || state.user.uid,
       createdBy: current?.createdBy || state.user.uid, createdAt: current?.createdAt || serverTimestamp(),
-      updatedBy: state.user.uid, updatedAt: serverTimestamp(),
+      updatedBy: state.user.uid, updatedByName: userLabel(), updatedAt: serverTimestamp(),
       source: current?.source || 'app'
     };
     await setDoc(doc(db, COLLECTION, id), payload);
+    await updateDoc(doc(db, RUNS, run.id), { participants: arrayUnion(userLabel()), updatedBy: state.user.uid, updatedByName: userLabel(), updatedAt: serverTimestamp() });
     $('inspectionDialog').close(); showToast(current ? 'La observación fue actualizada.' : 'Observación guardada en Firebase.');
   } catch (error) { showToast(friendlyError(error), true); }
   finally { saveButton.disabled = false; saveButton.textContent = form.elements.id.value ? 'Guardar cambios' : 'Guardar observación'; }
 }
 
 async function exportPdf() {
+  const selectedRun = state.tab === 'Historial' ? state.inspectionRuns.find(run => run.id === state.selectedInspectionId) : null;
   const rows = state.tab === 'Inicio' || state.tab === 'General'
     ? [...state.records].sort((a, b) => (b.inspectedAt || '').localeCompare(a.inspectedAt || ''))
-    : state.tab === 'Historial' && state.selectedInspectionDate !== null
-      ? recordsForView().filter(row => (row.inspectedAt || '') === state.selectedInspectionDate)
+    : state.tab === 'Historial' && selectedRun
+      ? recordsForView().filter(row => row.inspectionId === selectedRun.id)
+      : state.tab === 'Historial' && state.selectedInspectionDate !== null
+        ? recordsForView().filter(row => (row.inspectedAt || '') === state.selectedInspectionDate)
       : recordsForView();
   if (!rows.length) { showToast('No hay observaciones para exportar.'); return; }
   const button = $('exportButton'); button.disabled = true;
@@ -450,7 +639,7 @@ async function exportPdf() {
     const Pdf = globalThis.jspdf?.jsPDF;
     if (!Pdf || !Pdf.API.autoTable) throw new Error('No se pudo cargar el módulo PDF.');
     const pdf = new Pdf({ orientation: 'portrait', unit: 'mm', format: 'a4' });
-    const title = state.tab === 'Inicio' ? 'Inspección completa' : state.tab === 'Historial' && state.selectedInspectionDate !== null ? inspectionNumber(state.selectedInspectionDate) : state.tab === 'Historial' ? 'Historial de inspecciones' : state.tab === 'General' ? 'Reporte general de inspección' : areaTitle(state.tab);
+    const title = state.tab === 'Inicio' ? 'Inspección completa' : selectedRun ? inspectionNumber(selectedRun) : state.tab === 'Historial' && state.selectedInspectionDate !== null ? inspectionNumber(state.selectedInspectionDate) : state.tab === 'Historial' ? 'Historial de inspecciones' : state.tab === 'General' ? 'Reporte general de inspección' : areaTitle(state.tab);
     const generated = new Date().toLocaleString('es-EC', { dateStyle: 'medium', timeStyle: 'short' });
     const inspectionDates = rows.map(row => row.inspectedAt).filter(Boolean).sort();
     const dateRange = inspectionDates.length > 1 && inspectionDates[0] !== inspectionDates.at(-1)
@@ -496,7 +685,10 @@ async function exportPdf() {
       pdf.setTextColor(...palette.pastel); pdf.setFontSize(6.3);
       pdf.text(`Emitido ${generated}`, 199, 27, { align: 'right' });
       const metadata = rows[0];
-      if (metadata?.inspectorName || metadata?.reviewerName || metadata?.approverName) {
+      if (selectedRun?.openedByName) {
+        const participants = [...new Set([selectedRun.openedByName, ...(selectedRun.participants || []), ...rows.map(row => row.inspectorName).filter(Boolean)])];
+        pdf.setFontSize(5.1); pdf.text(`Inició: ${selectedRun.openedByName} · Participaron: ${participants.join(', ')}`, 71, 33, { maxWidth: 128 });
+      } else if (metadata?.inspectorName || metadata?.reviewerName || metadata?.approverName) {
         pdf.setFontSize(5.1);
         pdf.text(`Elaborado: ${metadata.inspectorName || '—'}  ·  Revisado: ${metadata.reviewerName || '—'}  ·  Aprobado: ${metadata.approverName || '—'}`, 71, 33);
       }
@@ -558,27 +750,27 @@ async function exportPdf() {
       } catch { imageData.set(key, null); }
     }));
     pdf.autoTable({
-      startY: tableStartY, showHead: 'everyPage', head: [['FECHA / NOTIFICACIÓN', 'ÁREA / UBICACIÓN', 'HALLAZGO / ACCIÓN / SEGUIMIENTO', 'RESPONSABLE', 'DÍAS', 'ESTADO', 'FOTOS']],
-      body: rows.map(row => [`${dateLabel(row.inspectedAt)}\nNotif.: ${row.notificationDateSource || dateLabel(row.notificationDate)}`, `${areaTitle(row.area)}${row.sourceSection ? `\n${row.sourceSection}` : ''}\n${row.location}`, `${row.description}${row.notes ? `\n${row.notes}` : ''}`, row.department || '—', daysOpen(row), STATUS[row.status] || '—', (row.photos || []).length ? '' : 'Sin evidencia']),
+      startY: tableStartY, showHead: 'everyPage', head: [['FECHA / NOTIFICACIÓN', 'ÁREA / UBICACIÓN', 'HALLAZGO / ACCIÓN / SEGUIMIENTO', 'RESPONSABLE', 'REGISTRÓ', 'DÍAS', 'ESTADO', 'FOTOS']],
+      body: rows.map(row => [`${dateLabel(row.inspectedAt)}\nNotif.: ${row.notificationDateSource || dateLabel(row.notificationDate)}`, `${areaTitle(row.area)}${row.sourceSection ? `\n${row.sourceSection}` : ''}\n${row.location}`, `${row.description}${row.notes ? `\n${row.notes}` : ''}`, row.department || '—', row.inspectorName || row.createdByName || '—', daysOpen(row), STATUS[row.status] || '—', (row.photos || []).length ? '' : 'Sin evidencia']),
       theme: 'grid', styles: { font: 'helvetica', fontSize: 6.5, cellPadding: 1.8, textColor: palette.ink, lineColor: palette.line, lineWidth: .18, minCellHeight: 16, valign: 'middle', overflow: 'linebreak' },
       headStyles: { fillColor: palette.darkBlue, textColor: palette.white, fontSize: 6.1, fontStyle: 'bold', halign: 'left', cellPadding: 2.3 },
       alternateRowStyles: { fillColor: palette.pale },
       columnStyles: {
-        0: { cellWidth: 22, fontSize: 5.8 }, 1: { cellWidth: 31, fontStyle: 'bold', fontSize: 6.1 }, 2: { cellWidth: 46 },
-        3: { cellWidth: 24, fontSize: 6 }, 4: { cellWidth: 12, halign: 'center', fontSize: 6 },
-        5: { cellWidth: 22, halign: 'center', fontStyle: 'bold', fontSize: 6 }, 6: { cellWidth: 35, halign: 'center', fontSize: 6, textColor: palette.muted }
+        0: { cellWidth: 18, fontSize: 5.5 }, 1: { cellWidth: 26, fontStyle: 'bold', fontSize: 5.8 }, 2: { cellWidth: 37, fontSize: 5.8 },
+        3: { cellWidth: 19, fontSize: 5.5 }, 4: { cellWidth: 18, fontSize: 5.5 }, 5: { cellWidth: 10, halign: 'center', fontSize: 5.8 },
+        6: { cellWidth: 21, halign: 'center', fontStyle: 'bold', fontSize: 5.8 }, 7: { cellWidth: 43, halign: 'center', fontSize: 5.8, textColor: palette.muted }
       },
       margin: { top: 38, left: 9, right: 9, bottom: 19 },
       willDrawPage: () => drawHeader(),
       didParseCell: data => {
         if (data.section !== 'body') return;
         const row = rows[data.row.index];
-        if (data.column.index === 5) {
+        if (data.column.index === 6) {
           const color = statusColors[row?.status] || statusColors.nueva;
           data.cell.styles.fillColor = color.fill; data.cell.styles.textColor = color.text;
           data.cell.styles.fontStyle = 'bold'; data.cell.styles.halign = 'center';
         }
-        if (data.column.index === 6) {
+        if (data.column.index === 7) {
           const photos = (row?.photos || []).slice(0, 6).filter(photo => imageData.get(photo.path || photo.previewUrl || photo.name));
           const lines = Math.ceil(photos.length / 2);
           data.cell.styles.minCellHeight = Math.max(16, lines ? 4 + lines * 9 + (lines - 1) * 1.2 : 16);
@@ -586,7 +778,7 @@ async function exportPdf() {
         }
       },
       didDrawCell: data => {
-        if (data.section !== 'body' || data.column.index !== 6) return;
+        if (data.section !== 'body' || data.column.index !== 7) return;
         const photos = (rows[data.row.index]?.photos || []).slice(0, 6).filter(photo => imageData.get(photo.path || photo.previewUrl || photo.name));
         photos.forEach((photo, index) => {
           const key = photo.path || photo.previewUrl || photo.name, source = imageData.get(key);
@@ -645,13 +837,21 @@ async function initialize() {
 
 document.addEventListener('click', event => {
   const nav = event.target.closest('[data-tab]');
-  if (nav) { state.tab = nav.dataset.tab; if (state.tab === 'Historial') state.selectedInspectionDate = null; $('sidebar').classList.remove('open'); render(); return; }
+  if (nav) { state.tab = nav.dataset.tab; if (state.tab === 'Historial') { state.selectedInspectionDate = null; state.selectedInspectionId = null; } $('sidebar').classList.remove('open'); render(); return; }
   const openInspection = event.target.closest('[data-open-inspection]');
-  if (openInspection) { state.tab = 'Historial'; state.selectedInspectionDate = openInspection.dataset.openInspection; render(); return; }
-  if (event.target.closest('#backToHistory')) { state.selectedInspectionDate = null; render(); return; }
+  if (openInspection) {
+    const key = openInspection.dataset.openInspection;
+    state.tab = 'Historial'; state.selectedInspectionDate = key.startsWith('legacy:') ? key.slice(7) : null;
+    state.selectedInspectionId = key.startsWith('legacy:') ? null : key;
+    const run = state.inspectionRuns.find(item => item.id === key);
+    if (run?.status === 'en_curso') { state.activeInspectionId = run.id; state.activeInspectionNumber = run.inspectionNumber; }
+    render(); return;
+  }
+  if (event.target.closest('#backToHistory')) { state.selectedInspectionDate = null; state.selectedInspectionId = null; render(); return; }
   const edit = event.target.closest('[data-edit]'); if (edit) { openEditDialog(edit.dataset.edit); return; }
+  const correct = event.target.closest('[data-correct]'); if (correct) { openCorrectionDialog(correct.dataset.correct); return; }
   if (event.target.closest('[data-create]')) { openNewDialog(); return; }
-  const tabLink = event.target.closest('[data-open-tab]'); if (tabLink) { state.tab = tabLink.dataset.openTab; if (state.tab === 'Historial') state.selectedInspectionDate = null; render(); return; }
+  const tabLink = event.target.closest('[data-open-tab]'); if (tabLink) { state.tab = tabLink.dataset.openTab; if (state.tab === 'Historial') { state.selectedInspectionDate = null; state.selectedInspectionId = null; } render(); return; }
   const removePhoto = event.target.closest('[data-remove-photo]'); if (removePhoto) { state.pendingPhotos.splice(Number(removePhoto.dataset.removePhoto), 1); drawPhotoPreview(); }
 });
 $('loginForm').addEventListener('submit', async event => {
@@ -664,14 +864,29 @@ $('loginForm').addEventListener('submit', async event => {
 $('demoButton').addEventListener('click', enterDemo);
 $('resetDemoButton').addEventListener('click', resetDemo);
 $('logoutButton').addEventListener('click', () => state.demo ? exitDemo() : firebaseApi.signOut(firebaseApi.auth));
-$('newInspection').addEventListener('click', () => openNewDialog());
+$('newInspection').addEventListener('click', async () => {
+  const area = AREAS.includes(state.tab) ? state.tab : 'PLANTA';
+  const selectedRun = state.tab === 'Historial' ? state.inspectionRuns.find(run => run.id === state.selectedInspectionId) : null;
+  if (selectedRun?.status === 'en_curso') { state.activeInspectionId = selectedRun.id; state.activeInspectionNumber = selectedRun.inspectionNumber; openNewDialog(area); return; }
+  const activeRun = state.inspectionRuns.find(run => run.id === state.activeInspectionId);
+  if (activeRun?.status === 'en_curso' && !selectedRun) { openNewDialog(area); return; }
+  try { await createInspection(area, true); } catch (error) { showToast(friendlyError(error), true); }
+});
+$('saveAreaButton').addEventListener('click', saveAreaProgress);
+$('closeInspectionButton').addEventListener('click', closeInspection);
 $('exportButton').addEventListener('click', exportPdf);
 $('inspectionForm').addEventListener('submit', saveInspection);
+$('correctionForm').addEventListener('submit', saveCorrection);
+$('correctionCamera').addEventListener('change', event => handleCorrectionPhotoFiles(event.currentTarget));
+$('correctionGallery').addEventListener('change', event => handleCorrectionPhotoFiles(event.currentTarget));
+$('correctionPhotoPreview').addEventListener('click', event => { const remove = event.target.closest('[data-remove-correction-photo]'); if (remove) { state.correctionPhotos.splice(Number(remove.dataset.removeCorrectionPhoto), 1); drawCorrectionPhotoPreview(); } });
 $('inspectionForm').elements.area.addEventListener('change', event => fillLocationOptions(event.currentTarget.value));
 $('locationSelect').addEventListener('change', () => syncOtherChoice($('locationSelect'), $('locationOther')));
 $('departmentSelect').addEventListener('change', () => syncOtherChoice($('departmentSelect'), $('departmentOther')));
 $('closeDialog').addEventListener('click', () => $('inspectionDialog').close());
 $('cancelDialog').addEventListener('click', () => $('inspectionDialog').close());
+$('closeCorrection').addEventListener('click', () => $('correctionDialog').close());
+$('cancelCorrection').addEventListener('click', () => $('correctionDialog').close());
 $('filtersToggle').addEventListener('click', () => $('advancedFilters').hidden = !$('advancedFilters').hidden);
 $('clearFilters').addEventListener('click', () => { for (const id of ['filterStatus', 'filterDepartment', 'filterFrom', 'filterTo']) $(id).value = ''; $('quickSearch').value = ''; $('filterOrder').value = 'desc'; render(); });
 for (const id of ['quickSearch', 'filterStatus', 'filterDepartment', 'filterFrom', 'filterTo', 'filterOrder']) $(id).addEventListener('input', render);
@@ -681,3 +896,4 @@ $('mobileMenu').addEventListener('click', () => $('sidebar').classList.toggle('o
 document.addEventListener('keydown', event => { if (event.key === 'Escape') $('sidebar').classList.remove('open'); });
 
 initialize();
+
