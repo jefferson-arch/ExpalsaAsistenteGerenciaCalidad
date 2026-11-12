@@ -79,6 +79,11 @@ service firebase.storage {
         && firestore.get(/databases/(default)/documents/expalsa_calidad_accesos/$(request.auth.uid)).data.get('deleted', false) != true
         && firestore.get(/databases/(default)/documents/expalsa_calidad_accesos/$(request.auth.uid)).data.email == request.auth.token.email;
     }
+    function expalsaInspectionStorageAdmin() {
+      return expalsaStorageAdmin() || (request.auth != null
+        && request.auth.token.email in ['fabio@expalsaevaluations.com','karina@expalsaevaluations.com']
+        && expalsaInspectionStorageInspector());
+    }
     match /expalsa_inspecciones/{uid}/{inspectionId}/{photoFile} {
       allow get: if expalsaStorageAdmin() || expalsaInspectionStorageInspector();
       allow list: if false;
@@ -90,7 +95,7 @@ service firebase.storage {
         && request.resource.contentType == 'image/jpeg'
         && request.resource.metadata.uploadedBy == request.auth.uid
         && request.resource.metadata.origin in ['camera','gallery'];
-      allow delete: if expalsaStorageAdmin() ||
+      allow delete: if expalsaInspectionStorageAdmin() ||
         (request.auth != null && request.auth.uid == uid && expalsaInspectionStorageInspector());
     }
 
