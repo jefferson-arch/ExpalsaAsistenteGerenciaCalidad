@@ -6,7 +6,7 @@ const LOCATIONS = {
   EXTERIORES: ['Comedor', 'Lavandería', 'Baños del personal', 'Baño de mujeres de máquinas clasificadoras', 'Baño de mujeres de supervisoras', 'Baño de hombres', 'Pre-cajas #2', 'Exteriores de planta'],
   BODEGAS: ['Bodega de materiales', 'Bodega de químicos y repuestos', 'Bodega de metabisulfito'],
   DESECHOS: ['Brines #1 y #2', 'Cámaras #1, #2 y #3', 'Lavado de gavetas y bines', 'Área de disposición de desechos'],
-  DESPACHO: ['Silo de hielo 2', 'Silo de hielo 3', 'Silo de hielo 4', 'Lavado de gavetas y bines', 'Muelle de despacho'],
+  DESPACHO: ['Silo de hielo (2, 3 y 4)', 'Lavado de gavetas y bines', 'Muelle de despacho'],
   OTROS: ['Laboratorio de recepción', 'Servicios generales', 'Planta de agua', 'Otra área']
 };
 const DEMO_RECORDS = [
@@ -285,6 +285,22 @@ function dataUrl(blob) {
   return new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(reader.result); reader.onerror = reject; reader.readAsDataURL(blob); });
 }
 
+async function whiteTransparentLogo() {
+  const response = await fetch('logoexpalsa.png');
+  if (!response.ok) throw new Error('No se pudo cargar el logo EXPALSA.');
+  const image = await createImageBitmap(await response.blob());
+  const canvas = document.createElement('canvas');
+  canvas.width = image.width; canvas.height = image.height;
+  const context = canvas.getContext('2d', { willReadFrequently: true });
+  context.drawImage(image, 0, 0);
+  const pixels = context.getImageData(0, 0, canvas.width, canvas.height);
+  for (let index = 0; index < pixels.data.length; index += 4) {
+    if (pixels.data[index + 3] > 0) pixels.data[index] = pixels.data[index + 1] = pixels.data[index + 2] = 255;
+  }
+  context.putImageData(pixels, 0, 0); image.close();
+  return canvas.toDataURL('image/png');
+}
+
 function loadPdfLibraries() {
   if (globalThis.jspdf?.jsPDF?.API?.autoTable) return Promise.resolve();
   if (!pdfLibrariesPromise) {
@@ -404,7 +420,7 @@ async function saveInspection(event) {
 }
 
 async function exportPdf() {
-  const rows = state.tab === 'Inicio'
+  const rows = state.tab === 'Inicio' || state.tab === 'General'
     ? [...state.records].sort((a, b) => (b.inspectedAt || '').localeCompare(a.inspectedAt || ''))
     : state.tab === 'Historial' && state.selectedInspectionDate !== null
       ? recordsForView().filter(row => (row.inspectedAt || '') === state.selectedInspectionDate)
@@ -416,7 +432,7 @@ async function exportPdf() {
     const Pdf = globalThis.jspdf?.jsPDF;
     if (!Pdf || !Pdf.API.autoTable) throw new Error('No se pudo cargar el módulo PDF.');
     const pdf = new Pdf({ orientation: 'portrait', unit: 'mm', format: 'a4' });
-    const title = state.tab === 'Inicio' ? 'Inspección completa' : state.tab === 'Historial' && state.selectedInspectionDate !== null ? inspectionNumber(state.selectedInspectionDate) : state.tab === 'Historial' ? 'Historial de inspecciones' : state.tab === 'General' ? 'Todas las áreas' : areaTitle(state.tab);
+    const title = state.tab === 'Inicio' ? 'Inspección completa' : state.tab === 'Historial' && state.selectedInspectionDate !== null ? inspectionNumber(state.selectedInspectionDate) : state.tab === 'Historial' ? 'Historial de inspecciones' : state.tab === 'General' ? 'Reporte general de inspección' : areaTitle(state.tab);
     const generated = new Date().toLocaleString('es-EC', { dateStyle: 'medium', timeStyle: 'short' });
     const inspectionDates = rows.map(row => row.inspectedAt).filter(Boolean).sort();
     const dateRange = inspectionDates.length > 1 && inspectionDates[0] !== inspectionDates.at(-1)
@@ -436,15 +452,12 @@ async function exportPdf() {
     const counts = Object.fromEntries(Object.keys(STATUS).map(key => [key, rows.filter(row => row.status === key).length]));
     const areaCounts = Object.fromEntries(AREAS.map(area => [area, rows.filter(row => row.area === area).length]));
     let logoData = null;
-    try {
-      const response = await fetch('logoexpalsa.png');
-      if (response.ok) logoData = await dataUrl(await response.blob());
-    } catch { /* continue with the text brand if the logo is unavailable */ }
+    try { logoData = await whiteTransparentLogo(); }
+    catch { /* continue with the text brand if the logo is unavailable */ }
 
     const drawHeader = () => {
       pdf.setFillColor(...palette.navy); pdf.rect(0, 0, 210, 36, 'F');
       pdf.setFillColor(...palette.sky); pdf.rect(0, 34, 210, 2, 'F');
-      pdf.setFillColor(...palette.white); pdf.roundedRect(10, 7, 54, 21, 2, 2, 'F');
       if (logoData) {
         try {
           const logo = pdf.getImageProperties(logoData), scale = Math.min(50 / logo.width, 15 / logo.height);
@@ -486,22 +499,25 @@ async function exportPdf() {
       pdf.setFontSize(12); pdf.setTextColor(...palette.navy);
       pdf.text(String(metric.value), x + metricW - 3, metricY + 15, { align: 'right' });
     });
-    const isHome = state.tab === 'Inicio';
-    if (isHome) {
+    const isConsolidated = state.tab === 'Inicio' || state.tab === 'General';
+    if (isConsolidated) {
       pdf.setFont('helvetica', 'bold'); pdf.setFontSize(7); pdf.setTextColor(...palette.darkBlue);
-      pdf.text('DISTRIBUCIÓN POR ÁREA', 9, 68);
-      AREAS.forEach((area, index) => {
+      pdf.text('DISTRIBUCIÓN POR ÁREA Y UBICACIÓN', 9, 68);
+      const summaryCards = [...AREAS.map(area => ({ label: areaTitle(area), value: areaCounts[area] })), {
+        label: 'Silo de hielo', value: rows.filter(row => /silo\s+de\s+hielo/i.test(row.location || '')).length
+      }];
+      summaryCards.forEach((card, index) => {
         const col = index % 3, row = Math.floor(index / 3), x = 9 + col * 65, y = 71 + row * 13;
         pdf.setFillColor(...palette.pale); pdf.setDrawColor(...palette.line); pdf.roundedRect(x, y, 62, 11, 1.5, 1.5, 'FD');
         pdf.setFillColor(...palette.blue); pdf.circle(x + 4, y + 5.5, 1.1, 'F');
         pdf.setFont('helvetica', 'normal'); pdf.setFontSize(6.5); pdf.setTextColor(...palette.ink);
-        pdf.text(areaTitle(area), x + 7, y + 6.7);
+        pdf.text(card.label, x + 7, y + 6.7);
         pdf.setFont('helvetica', 'bold'); pdf.setTextColor(...palette.darkBlue);
-        pdf.text(String(areaCounts[area]), x + 58, y + 6.7, { align: 'right' });
+        pdf.text(String(card.value), x + 58, y + 6.7, { align: 'right' });
       });
     }
-    const tableTitleY = isHome ? 103 : 68;
-    const tableStartY = isHome ? 107 : 72;
+    const tableTitleY = isConsolidated ? 116 : 68;
+    const tableStartY = isConsolidated ? 120 : 72;
     pdf.setFont('helvetica', 'bold'); pdf.setFontSize(7.5); pdf.setTextColor(...palette.darkBlue);
     pdf.text('DETALLE DE HALLAZGOS', 9, tableTitleY);
     pdf.setDrawColor(...palette.line); pdf.setLineWidth(.35); pdf.line(9, tableTitleY + 2, 201, tableTitleY + 2);
