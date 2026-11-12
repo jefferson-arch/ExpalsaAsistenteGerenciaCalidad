@@ -217,9 +217,6 @@ service cloud.firestore {
       return exists(attemptDoc(uid,stage)) && get(attemptDoc(uid,stage)).data.status in ['submitted','graded'] &&
         (get(attemptDoc(uid,stage)).data.status=='graded' || exists(automaticResultDoc(uid,stage)));
     }
-    function priorGraded(uid,stage) {
-      return retryStage(stage) ? true : stage=='1' || (stage=='2' && theoryDone(uid,'1')) || (stage=='3' && theoryDone(uid,'2'));
-    }
     function stageNumber(stage) { return stage in ['1','1_2']?1:stage in ['2','2_2']?2:3; }
     function progressKey(n) { return n==1?'1':n==2?'2':'3'; }
     function progressOf(p) { return p.get('stageProgress',{'version':1,'active':1,'closed':{}}); }
@@ -408,7 +405,6 @@ service cloud.firestore {
       let a=get(attemptDoc(uid,stage)).data;
       return a.get('bankSchema',1)==3 ? get(dynamicBank(a.version)).data.questionIds.size() : get(stageBank(stage)).data.questions.size();
     }
-    function automaticHit(a,k,id) { return a.get(id,'') in k[id].canonical ? 1 : 0; }
     function automaticThirty(a,b,k) {
       let ids=b.questionIds;
       return (a.get(ids[0],'') in k[ids[0]].canonical ? 1 : 0) + (a.get(ids[1],'') in k[ids[1]].canonical ? 1 : 0) + (a.get(ids[2],'') in k[ids[2]].canonical ? 1 : 0) + (a.get(ids[3],'') in k[ids[3]].canonical ? 1 : 0) + (a.get(ids[4],'') in k[ids[4]].canonical ? 1 : 0) + (a.get(ids[5],'') in k[ids[5]].canonical ? 1 : 0) + (a.get(ids[6],'') in k[ids[6]].canonical ? 1 : 0) + (a.get(ids[7],'') in k[ids[7]].canonical ? 1 : 0) + (a.get(ids[8],'') in k[ids[8]].canonical ? 1 : 0) + (a.get(ids[9],'') in k[ids[9]].canonical ? 1 : 0) + (a.get(ids[10],'') in k[ids[10]].canonical ? 1 : 0) + (a.get(ids[11],'') in k[ids[11]].canonical ? 1 : 0) + (a.get(ids[12],'') in k[ids[12]].canonical ? 1 : 0) + (a.get(ids[13],'') in k[ids[13]].canonical ? 1 : 0) + (a.get(ids[14],'') in k[ids[14]].canonical ? 1 : 0) + (a.get(ids[15],'') in k[ids[15]].canonical ? 1 : 0) + (a.get(ids[16],'') in k[ids[16]].canonical ? 1 : 0) + (a.get(ids[17],'') in k[ids[17]].canonical ? 1 : 0) + (a.get(ids[18],'') in k[ids[18]].canonical ? 1 : 0) + (a.get(ids[19],'') in k[ids[19]].canonical ? 1 : 0) + (a.get(ids[20],'') in k[ids[20]].canonical ? 1 : 0) + (a.get(ids[21],'') in k[ids[21]].canonical ? 1 : 0) + (a.get(ids[22],'') in k[ids[22]].canonical ? 1 : 0) + (a.get(ids[23],'') in k[ids[23]].canonical ? 1 : 0) + (a.get(ids[24],'') in k[ids[24]].canonical ? 1 : 0) + (a.get(ids[25],'') in k[ids[25]].canonical ? 1 : 0) + (a.get(ids[26],'') in k[ids[26]].canonical ? 1 : 0) + (a.get(ids[27],'') in k[ids[27]].canonical ? 1 : 0) + (ids.size()>28 && a.get(ids[28],'') in k[ids[28]].canonical ? 1 : 0) + (ids.size()>29 && a.get(ids[29],'') in k[ids[29]].canonical ? 1 : 0);
@@ -569,41 +565,11 @@ service cloud.firestore {
         (t is number && p is number && m is number && m>=(t+p)*0.5-0.0000001 && m<=(t+p)*0.5+0.0000001);
     }
 
-    function radarTopics(uid,d) {
-      return d.keys().hasOnly(['schema','uid','asOf','practice','theory','average','delta','paired','covered','practicalAxes','theoreticalAxes','updatedBy','updatedAt']) && d.size()==13 && d.schema==3 && d.uid==uid && d.asOf.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$') && radarScore(d.practice) && radarScore(d.theory) && radarScore(d.average) && radarMean(d.practice,d.theory,d.average) && d.delta==null && d.paired==0 && d.covered is int && d.covered>=0 && d.covered<=9 && d.practicalAxes is map && d.practicalAxes.size()==9 && d.practicalAxes.keys().hasOnly(['cuenta', 'bruto', 'neto', 'uniformidad', 'calidad', 'ordenes', 'registros', 'organolepticos', 'sulfitos']) && radarScore(d.practicalAxes.cuenta) && radarScore(d.practicalAxes.bruto) && radarScore(d.practicalAxes.neto) && radarScore(d.practicalAxes.uniformidad) && radarScore(d.practicalAxes.calidad) && radarScore(d.practicalAxes.ordenes) && radarScore(d.practicalAxes.registros) && radarScore(d.practicalAxes.organolepticos) && radarScore(d.practicalAxes.sulfitos) && d.theoreticalAxes is map && d.theoreticalAxes.size()==11 && d.theoreticalAxes.keys().hasOnly(['certificaciones', 'piezas', 'calculoscuenta', 'glaseo', 'uniformidad', 'cuenta', 'peso', 'calidad', 'temperatura', 'sulfitos', 'codex']) && radarScore(d.theoreticalAxes.certificaciones) && radarScore(d.theoreticalAxes.piezas) && radarScore(d.theoreticalAxes.calculoscuenta) && radarScore(d.theoreticalAxes.glaseo) && radarScore(d.theoreticalAxes.uniformidad) && radarScore(d.theoreticalAxes.cuenta) && radarScore(d.theoreticalAxes.peso) && radarScore(d.theoreticalAxes.calidad) && radarScore(d.theoreticalAxes.temperatura) && radarScore(d.theoreticalAxes.sulfitos) && radarScore(d.theoreticalAxes.codex) && d.updatedBy==request.auth.uid && d.updatedAt==request.time;
-    }
     function radarTraining(uid,d) {
       return d.keys().hasOnly(['schema','uid','asOf','practice','theory','average','delta','paired','covered','practicalAxes','theoreticalAxes','updatedBy','updatedAt']) && d.size()==13 && d.schema==4 && d.uid==uid && d.asOf is string && d.asOf.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$') && radarScore(d.practice) && radarScore(d.theory) && radarScore(d.average) && radarMean(d.practice,d.theory,d.average) && d.delta==null && d.paired==0 && d.covered is int && d.covered>=0 && d.covered<=9 && d.practicalAxes is map && d.practicalAxes.size()==9 && d.practicalAxes.keys().hasOnly(['cuenta','bruto','neto','uniformidad','calidad','ordenes','registros','organolepticos','sulfitos']) && radarScore(d.practicalAxes.cuenta) && radarScore(d.practicalAxes.bruto) && radarScore(d.practicalAxes.neto) && radarScore(d.practicalAxes.uniformidad) && radarScore(d.practicalAxes.calidad) && radarScore(d.practicalAxes.ordenes) && radarScore(d.practicalAxes.registros) && radarScore(d.practicalAxes.organolepticos) && radarScore(d.practicalAxes.sulfitos) && d.theoreticalAxes is map && d.theoreticalAxes.size()==10 && d.theoreticalAxes.keys().hasOnly(['C1','C2','C3','C4','C5','C6','C7','C8','C9','C10']) && radarScore(d.theoreticalAxes.C1) && radarScore(d.theoreticalAxes.C2) && radarScore(d.theoreticalAxes.C3) && radarScore(d.theoreticalAxes.C4) && radarScore(d.theoreticalAxes.C5) && radarScore(d.theoreticalAxes.C6) && radarScore(d.theoreticalAxes.C7) && radarScore(d.theoreticalAxes.C8) && radarScore(d.theoreticalAxes.C9) && radarScore(d.theoreticalAxes.C10) && d.updatedBy==request.auth.uid && d.updatedAt==request.time;
     }
 
-    function radarOperational(uid,d) {
-      return d.keys().hasOnly(['schema','uid','asOf','practice','theory','average','delta','paired','covered','competencies','technical','updatedBy','updatedAt']) && d.size()==13 && d.schema==2 && d.uid==uid && d.asOf.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$') && radarScore(d.practice) && radarScore(d.theory) && radarScore(d.average) && radarMean(d.practice,d.theory,d.average) && d.delta==null && d.paired==0 && d.covered is int && d.covered>=0 && d.covered<=13 && d.competencies is map && d.competencies.size()==39 && d.competencies.keys().hasOnly(['P1_practice', 'P1_theory', 'P1_average', 'P2_practice', 'P2_theory', 'P2_average', 'P3_practice', 'P3_theory', 'P3_average', 'P4_practice', 'P4_theory', 'P4_average', 'P5_practice', 'P5_theory', 'P5_average', 'P6_practice', 'P6_theory', 'P6_average', 'P7_practice', 'P7_theory', 'P7_average', 'P8_practice', 'P8_theory', 'P8_average', 'P9_practice', 'P9_theory', 'P9_average', 'P10_practice', 'P10_theory', 'P10_average', 'P11_practice', 'P11_theory', 'P11_average', 'P12_practice', 'P12_theory', 'P12_average', 'P13_practice', 'P13_theory', 'P13_average']) && radarScore(d.competencies.P1_practice) && radarScore(d.competencies.P1_theory) && radarScore(d.competencies.P1_average) && radarScore(d.competencies.P2_practice) && radarScore(d.competencies.P2_theory) && radarScore(d.competencies.P2_average) && radarScore(d.competencies.P3_practice) && radarScore(d.competencies.P3_theory) && radarScore(d.competencies.P3_average) && radarScore(d.competencies.P4_practice) && radarScore(d.competencies.P4_theory) && radarScore(d.competencies.P4_average) && radarScore(d.competencies.P5_practice) && radarScore(d.competencies.P5_theory) && radarScore(d.competencies.P5_average) && radarScore(d.competencies.P6_practice) && radarScore(d.competencies.P6_theory) && radarScore(d.competencies.P6_average) && radarScore(d.competencies.P7_practice) && radarScore(d.competencies.P7_theory) && radarScore(d.competencies.P7_average) && radarScore(d.competencies.P8_practice) && radarScore(d.competencies.P8_theory) && radarScore(d.competencies.P8_average) && radarScore(d.competencies.P9_practice) && radarScore(d.competencies.P9_theory) && radarScore(d.competencies.P9_average) && radarScore(d.competencies.P10_practice) && radarScore(d.competencies.P10_theory) && radarScore(d.competencies.P10_average) && radarScore(d.competencies.P11_practice) && radarScore(d.competencies.P11_theory) && radarScore(d.competencies.P11_average) && radarScore(d.competencies.P12_practice) && radarScore(d.competencies.P12_theory) && radarScore(d.competencies.P12_average) && radarScore(d.competencies.P13_practice) && radarScore(d.competencies.P13_theory) && radarScore(d.competencies.P13_average) && d.technical is map && d.technical.size()==10 && d.technical.keys().hasOnly(['C1','C2','C3','C4','C5','C6','C7','C8','C9','C10']) && radarScore(d.technical.C1) && radarScore(d.technical.C2) && radarScore(d.technical.C3) && radarScore(d.technical.C4) && radarScore(d.technical.C5) && radarScore(d.technical.C6) && radarScore(d.technical.C7) && radarScore(d.technical.C8) && radarScore(d.technical.C9) && radarScore(d.technical.C10) && d.updatedBy==request.auth.uid && d.updatedAt==request.time;
-    }
 
-    function radarData(uid,d) {
-      let c=d.competencies;
-      let t=d.technical;
-      return d.keys().hasOnly(['schema','uid','asOf','practice','theory','average','delta','paired','covered','competencies','technical','updatedBy','updatedAt']) && d.size()==13 &&
-        d.schema==1 && d.uid==uid && d.asOf is string && d.asOf.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$') &&
-        radarScore(d.practice) && radarScore(d.theory) && radarScore(d.average) &&
-        radarMean(d.practice,d.theory,d.average) &&
-        (d.delta==null || (d.delta is number && d.delta>=-100 && d.delta<=100)) && d.paired is int && d.paired>=0 && d.paired<=10 && d.covered is int && d.covered>=0 && d.covered<=10 &&
-        c.size()==30 && c.keys().hasOnly(['C1_theory','C1_practice','C1_average','C2_theory','C2_practice','C2_average','C3_theory','C3_practice','C3_average','C4_theory','C4_practice','C4_average','C5_theory','C5_practice','C5_average','C6_theory','C6_practice','C6_average','C7_theory','C7_practice','C7_average','C8_theory','C8_practice','C8_average','C9_theory','C9_practice','C9_average','C10_theory','C10_practice','C10_average']) &&
-        radarScore(c.C1_theory) && c.C1_practice in [null,0,25,50,75,100] && radarScore(c.C1_average) &&
-        radarScore(c.C2_theory) && c.C2_practice in [null,0,25,50,75,100] && radarScore(c.C2_average) &&
-        radarScore(c.C3_theory) && c.C3_practice in [null,0,25,50,75,100] && radarScore(c.C3_average) &&
-        radarScore(c.C4_theory) && c.C4_practice in [null,0,25,50,75,100] && radarScore(c.C4_average) &&
-        radarScore(c.C5_theory) && c.C5_practice in [null,0,25,50,75,100] && radarScore(c.C5_average) &&
-        radarScore(c.C6_theory) && c.C6_practice in [null,0,25,50,75,100] && radarScore(c.C6_average) &&
-        radarScore(c.C7_theory) && c.C7_practice in [null,0,25,50,75,100] && radarScore(c.C7_average) &&
-        radarScore(c.C8_theory) && c.C8_practice in [null,0,25,50,75,100] && radarScore(c.C8_average) &&
-        radarScore(c.C9_theory) && c.C9_practice in [null,0,25,50,75,100] && radarScore(c.C9_average) &&
-        radarScore(c.C10_theory) && c.C10_practice in [null,0,25,50,75,100] && radarScore(c.C10_average) &&
-        t is map && t.size()==7 && t.keys().hasOnly(['temperature','sensory','weight','glaze','sulfites','defects','sampling']) &&
-        t.temperature in [null,0,25,50,75,100] && t.sensory in [null,0,25,50,75,100] && t.weight in [null,0,25,50,75,100] && t.glaze in [null,0,25,50,75,100] &&
-        t.sulfites in [null,0,25,50,75,100] && t.defects in [null,0,25,50,75,100] && t.sampling in [null,0,25,50,75,100] &&
-        d.updatedBy==request.auth.uid && d.updatedAt==request.time;
-    }
     match /expalsa_calidad_radares/{uid} {
       allow get: if expalsaAdmin() || (inspector() && request.auth.uid==uid && resource.data.get('schema',0)==4);
       allow list: if expalsaAdmin();
@@ -665,7 +631,6 @@ service cloud.firestore {
         d.createdAt is timestamp && d.createdBy==request.auth.uid && photoIdsValid(d.photoIds) && technicalValid(d.get('technical',null),false);
     }
 
-    function v2Level(v) { return v is int && v>=1 && v<=3; }
     function v2Competencies(v) {
       return v.values is map && v.values.size()>0 && v.values.keys().hasOnly(['K1','K2','K3','K4','K5']) &&
         v.values.values().hasOnly([0,1,2,3]) && v.evidence is map && v.evidence.keys()==v.values.keys() &&
@@ -1225,18 +1190,6 @@ match /empaque_ejercicio_reportes/{reporteId} {
 
     // MODULO DE CAPACITACION 2026 - EXCLUSIVAMENTE ADMINISTRADOR
     // Colecciones independientes: no modifica evaluaciones, resultados ni expedientes oficiales.
-    function capAdminWrite(d) {
-      return expalsaAdmin()
-        && d.keys().hasOnly(['id','name','station','accountUid','email','active','createdAt','updatedAt','updatedBy'])
-        && d.keys().hasAll(['id','name','station','accountUid','email','active','createdAt','updatedAt','updatedBy'])
-        && d.id is string && d.name is string && d.name.size() >= 2 && d.name.size() <= 100
-        && d.station in ['M02','M05','M06','M07','M08','M09','M10','B12','B345','T01']
-        && d.email is string && d.email.size() <= 150
-        && d.accountUid is string && d.accountUid.size() <= 128
-        && d.active is bool
-        && d.updatedBy == request.auth.uid
-        && d.updatedAt == request.time;
-    }
     function capBoardScore(v) { return v == null || (v is number && v >= 0 && v <= 100); }
     function capBoardScoresValid(s) { return s is list && s.size() == 10
       && capBoardScore(s[0]) && capBoardScore(s[1]) && capBoardScore(s[2]) && capBoardScore(s[3]) && capBoardScore(s[4])
