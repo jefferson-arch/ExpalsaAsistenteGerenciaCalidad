@@ -1,27 +1,19 @@
 const COLLECTION = 'expalsa_calidad_inspecciones';
-const AREAS = ['PLANTA', 'EXTERIORES', 'BODEGAS', 'DESECHOS', 'DESPACHO', 'OTROS'];
+const AREAS = ['PLANTA', 'EXTERIORES', 'BODEGAS', 'DESECHOS', 'DESPACHO', 'SILO DE HIELO', 'OTROS'];
 const STATUS = { cumple: 'Cumple', no_cumple: 'No cumple', parcial: 'Parcial', nueva: 'Nueva observación' };
 const LOCATIONS = {
-  PLANTA: ['Vestidores / Ingreso a Planta', 'Recepción de materia prima', 'Descabezado (Planta baja)', 'Lavado de materiales', 'Precajas #1', 'Máquinas clasificadoras', 'Lavado de gavetas y canastillas', 'Brines #1 y #2', 'Brines #3, #4 y #5', 'Cuarto de salmuera', 'Precámara', 'Cámaras #1, #2 y #3', 'Cámaras #4, #5 y #6', 'Túneles', 'Decorado', 'Silo de hielo', 'Laboratorio de recepción'],
+  PLANTA: ['Vestidores / Ingreso a Planta', 'Recepción de materia prima', 'Descabezado (Planta baja)', 'Lavado de materiales', 'Precajas #1', 'Máquinas clasificadoras', 'Lavado de gavetas y canastillas', 'Brines #1 y #2', 'Brines #3, #4 y #5', 'Cuarto de salmuera', 'Precámara', 'Cámaras #1, #2 y #3', 'Cámaras #4, #5 y #6', 'Túneles', 'Decorado', 'Laboratorio de recepción'],
   EXTERIORES: ['Comedor', 'Lavandería', 'Baños del personal', 'Baño de mujeres de máquinas clasificadoras', 'Baño de mujeres de supervisoras', 'Baño de hombres', 'Pre-cajas #2', 'Exteriores de planta'],
   BODEGAS: ['Bodega de materiales', 'Bodega de químicos y repuestos', 'Bodega de metabisulfito'],
   DESECHOS: ['Brines #1 y #2', 'Cámaras #1, #2 y #3', 'Lavado de gavetas y bines', 'Área de disposición de desechos'],
-  DESPACHO: ['Silo de hielo (2, 3 y 4)', 'Lavado de gavetas y bines', 'Muelle de despacho'],
+  DESPACHO: ['Lavado de gavetas y bines', 'Muelle de despacho'],
+  'SILO DE HIELO': ['Silo de hielo 2', 'Silo de hielo 3', 'Silo de hielo 4', 'Silo de hielo 3-4'],
   OTROS: ['Laboratorio de recepción', 'Servicios generales', 'Planta de agua', 'Otra área']
 };
-const DEMO_RECORDS = [
-  { id: 'demo-001', area: 'PLANTA', inspectedAt: '2026-09-12', location: 'Vestidores / Ingreso a Planta', description: 'Lámpara atrapa insectos N.º 5 apagada o con tubos quemados.', department: 'MANTENIMIENTO - CALIDAD', notificationDate: '2026-09-12', status: 'nueva', notes: 'Nueva observación registrada en la inspección del 12/09/2026.', photos: [{ previewUrl: 'demo-evidence/planta.jpg', name: 'evidencia-lampara.jpg' }] },
-  { id: 'demo-002', area: 'PLANTA', inspectedAt: '2026-09-12', location: 'Máquinas clasificadoras', description: 'Condensación en el tumbado y presencia de moho.', department: 'MANTENIMIENTO', notificationDate: '2026-09-12', status: 'nueva', notes: '', photos: [{ previewUrl: 'demo-evidence/galpon2.jpg', name: 'evidencia-condensacion.jpg' }] },
-  { id: 'demo-003', area: 'PLANTA', inspectedAt: '2026-09-12', location: 'Brines #3, #4 y #5', description: 'Boquillas de la salmuera con presencia de óxido.', department: 'PRODUCCIÓN', notificationDate: '2026-09-12', status: 'parcial', notes: '' },
-  { id: 'demo-004', area: 'EXTERIORES', inspectedAt: '2026-09-12', location: 'Baños del personal', description: 'Tachos de basura sin pedales; el personal no debe tener contacto con la mano.', department: 'SERVICIO GENERAL', notificationDate: '2026-09-12', status: 'nueva', notes: '', photos: [{ previewUrl: 'demo-evidence/exteriores.jpg', name: 'evidencia-tacho.jpg' }] },
-  { id: 'demo-005', area: 'BODEGAS', inspectedAt: '2026-09-12', location: 'Bodega de materiales', description: 'Daño en la rastrera.', department: 'BODEGA', notificationDate: '2026-06-13', status: 'cumple', notes: 'Estado consignado como cumplido en el reporte.' },
-  { id: 'demo-006', area: 'DESECHOS', inspectedAt: '2026-09-12', location: 'Brines #1 y #2', description: 'Se evidencia base dañada utilizada como recipiente para desechos.', department: 'PRODUCCIÓN', notificationDate: '2026-06-12', status: 'cumple', notes: '' },
-  { id: 'demo-007', area: 'DESPACHO', inspectedAt: '2026-09-12', location: 'Silo de hielo 3', description: 'Chute: puertas con presencia de óxido.', department: 'DESPACHO Y LOGÍSTICA', notificationDate: '2026-09-12', status: 'nueva', notes: '', photos: [{ previewUrl: 'demo-evidence/despacho.jpg', name: 'evidencia-chute.jpg' }] },
-  { id: 'demo-008', area: 'OTROS', inspectedAt: '2026-09-12', location: 'Laboratorio de recepción', description: 'Puerta de emergencia desprendida.', department: 'MANTENIMIENTO', notificationDate: '2026-03-09', status: 'no_cumple', notes: '' }
-].map(row => ({ ...row, photos: (row.photos || []).map(photo => ({ ...photo })), source: 'ejemplo_inspeccion_2026-09-12' }));
+let demoRecordsPromise;
 const SECTIONS = [
   { id: 'Inicio', icon: '⌂', title: 'Inicio', description: 'Resumen de hallazgos y acciones de inspección.' },
-  ...AREAS.map(area => ({ id: area, icon: ({ PLANTA: '▦', EXTERIORES: '⌂', BODEGAS: '▤', DESECHOS: '♲', DESPACHO: '⇧', OTROS: '⋯' })[area], title: area[0] + area.slice(1).toLowerCase(), description: `Observaciones registradas en ${area.toLowerCase()}.` })),
+  ...AREAS.map(area => ({ id: area, icon: ({ PLANTA: '▦', EXTERIORES: '⌂', BODEGAS: '▤', DESECHOS: '♲', DESPACHO: '⇧', 'SILO DE HIELO': '❄', OTROS: '⋯' })[area], title: areaTitle(area), description: `Observaciones registradas en ${area.toLowerCase()}.` })),
   { id: 'General', icon: '▧', title: 'General', description: 'Observaciones consolidadas de todas las instalaciones.' },
   { id: 'Historial', icon: '◷', title: 'Historial', description: 'Busca, filtra y revisa las inspecciones anteriores.' }
 ];
@@ -30,6 +22,7 @@ const $ = id => document.getElementById(id);
 const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const dateLabel = value => value ? new Date(`${value}T12:00:00`).toLocaleDateString('es-EC', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
 const elapsedDays = value => value ? Math.floor((Date.UTC(new Date().getFullYear(), new Date().getMonth(), new Date().getDate()) - Date.parse(`${value}T00:00:00Z`)) / 86400000) : '—';
+const daysOpen = row => Number.isFinite(row.daysOpenSnapshot) ? row.daysOpenSnapshot : elapsedDays(row.notificationDate);
 const state = { user: null, role: '', demo: false, tab: 'Inicio', selectedInspectionDate: null, records: [], unsubscribe: null, pendingPhotos: [], editingPhotos: [], toastTimer: null };
 let firebaseApi;
 let inspectionModulesPromise;
@@ -149,10 +142,10 @@ function render() {
     $('resultCount').textContent = `${detailRows.length} ${detailRows.length === 1 ? 'observación' : 'observaciones'}`;
     $('recordsHead').innerHTML = '<tr><th>FECHA / ÁREA</th><th>HALLAZGO</th><th>RESPONSABLE</th><th>DÍAS ABIERTOS</th><th>ESTADO</th><th>EVIDENCIA</th><th></th></tr>';
     $('recordsBody').innerHTML = detailRows.map(row => `<tr>
-      <td><div class="date-area"><strong>${escapeHtml(dateLabel(row.inspectedAt))}</strong><span>${escapeHtml(row.area)} · ${escapeHtml(row.location)}</span></div></td>
+      <td><div class="date-area"><strong>${escapeHtml(dateLabel(row.inspectedAt))}</strong><span>${escapeHtml(areaTitle(row.area))}${row.sourceSection ? ` · ${escapeHtml(row.sourceSection)}` : ''} · ${escapeHtml(row.location)}</span></div></td>
       <td><span class="finding-title">${escapeHtml(row.description)}</span>${row.notes ? `<span class="finding-note">${escapeHtml(row.notes)}</span>` : ''}</td>
       <td class="department-cell">${escapeHtml(row.department || '—')}</td>
-      <td>${escapeHtml(elapsedDays(row.notificationDate))}</td>
+      <td>${escapeHtml(daysOpen(row))}</td>
       <td><span class="status-pill status-${escapeHtml(row.status)}">${escapeHtml(STATUS[row.status] || 'Sin estado')}</span></td>
       <td><span class="photo-count">${(row.photos || []).length ? `▧ ${(row.photos || []).length} foto${row.photos.length > 1 ? 's' : ''}` : '—'}</span></td>
       <td><button class="row-actions" data-edit="${escapeHtml(row.id)}" type="button" aria-label="Editar observación">↗</button></td>
@@ -195,7 +188,7 @@ function renderDashboard() {
   $('recentRows').innerHTML = recent.length ? `<div class="recent-list">${recent.map(row => `<div class="recent-row"><span class="recent-date">${escapeHtml(dateLabel(row.inspectedAt))}</span><span class="recent-finding">${escapeHtml(row.description)}</span><span class="recent-location">${escapeHtml(row.area)} · ${escapeHtml(row.location)}</span><span class="status-pill status-${escapeHtml(row.status)}">${escapeHtml(STATUS[row.status] || '')}</span><button class="row-actions" type="button" data-edit="${escapeHtml(row.id)}" aria-label="Editar observación">↗</button></div>`).join('')}</div>` : '<div class="empty-state"><div class="empty-glyph">▧</div><h3>Tu historial empieza aquí</h3><p>Las observaciones guardadas aparecerán en este resumen.</p></div>';
 }
 
-function areaTitle(area) { return area ? area[0] + area.slice(1).toLowerCase() : ''; }
+function areaTitle(area) { return area === 'SILO DE HIELO' ? 'Silo de hielo' : area ? area[0] + area.slice(1).toLowerCase() : ''; }
 
 async function verifyRole(user) {
   const { db, doc, getDoc } = firebaseApi;
@@ -238,23 +231,48 @@ function startApp(user, role) {
   startRecordsListener();
 }
 
-function enterDemo() {
-  if (state.unsubscribe) state.unsubscribe(); state.unsubscribe = null;
-  state.user = { uid: 'demo-local', email: 'ejemplo@expalsa.local', displayName: 'Ejemplo local' };
-  state.role = 'demo'; state.demo = true; state.tab = 'Inicio'; state.records = DEMO_RECORDS.map(row => ({ ...row, photos: row.photos.map(photo => ({ ...photo })) }));
-  $('userEmail').textContent = 'Modo ejemplo'; $('userInitial').textContent = 'E';
-  $('updatedAtLabel').textContent = 'Ejemplo local · no se guarda en Firebase';
-  $('authGate').hidden = true; $('appShell').hidden = false;
-  $('resetDemoButton').hidden = false; $('logoutButton').textContent = 'Salir del ejemplo';
-  setConnection(true, 'Ejemplo local · sin Firebase'); render();
+async function loadDemoRecords() {
+  if (!demoRecordsPromise) {
+    demoRecordsPromise = fetch('demo-inspection-full.json').then(response => {
+      if (!response.ok) throw new Error('No se pudo cargar el ejemplo de inspección.');
+      return response.json();
+    }).then(rows => {
+      if (!Array.isArray(rows) || rows.length !== 158) throw new Error('El archivo de ejemplo está incompleto.');
+      return rows;
+    }).catch(error => { demoRecordsPromise = null; throw error; });
+  }
+  const rows = await demoRecordsPromise;
+  return rows.map(row => ({ ...row, photos: (row.photos || []).map(photo => ({ ...photo })) }));
 }
 
-function resetDemo() {
+async function enterDemo() {
+  const button = $('demoButton');
+  button.disabled = true; button.textContent = 'Cargando ejemplo…';
+  try {
+    const records = await loadDemoRecords();
+    if (state.unsubscribe) state.unsubscribe(); state.unsubscribe = null;
+    state.user = { uid: 'demo-local', email: 'ejemplo@expalsa.local', displayName: 'Ejemplo local' };
+    state.role = 'demo'; state.demo = true; state.tab = 'Inicio'; state.selectedInspectionDate = null; state.records = records;
+    $('userEmail').textContent = 'Modo ejemplo'; $('userInitial').textContent = 'E';
+    $('updatedAtLabel').textContent = 'Ejemplo local · 158 hallazgos · no se guarda en Firebase';
+    $('authGate').hidden = true; $('appShell').hidden = false;
+    $('resetDemoButton').hidden = false; $('logoutButton').textContent = 'Salir del ejemplo';
+    setConnection(true, 'Ejemplo local · sin Firebase'); render();
+  } catch (error) {
+    $('authMessage').textContent = error.message || 'No se pudo cargar el ejemplo.'; $('authMessage').classList.add('error');
+  } finally {
+    button.disabled = false; button.textContent = 'Cargar ejemplo de inspección';
+  }
+}
+
+async function resetDemo() {
   if (!state.demo) return;
-  state.records = DEMO_RECORDS.map(row => ({ ...row, photos: row.photos.map(photo => ({ ...photo })) })); state.tab = 'Inicio';
-  $('quickSearch').value = '';
-  for (const id of ['filterStatus', 'filterDepartment', 'filterFrom', 'filterTo']) $(id).value = '';
-  $('filterOrder').value = 'desc'; render(); showToast('Ejemplo recargado.');
+  try {
+    state.records = await loadDemoRecords(); state.tab = 'Inicio'; state.selectedInspectionDate = null;
+    $('quickSearch').value = '';
+    for (const id of ['filterStatus', 'filterDepartment', 'filterFrom', 'filterTo']) $(id).value = '';
+    $('filterOrder').value = 'desc'; render(); showToast('Ejemplo completo recargado.');
+  } catch (error) { showToast(error.message || 'No se pudo recargar el ejemplo.', true); }
 }
 
 function exitDemo() {
@@ -477,6 +495,11 @@ async function exportPdf() {
       pdf.text(dateRange, 199, 19, { align: 'right' });
       pdf.setTextColor(...palette.pastel); pdf.setFontSize(6.3);
       pdf.text(`Emitido ${generated}`, 199, 27, { align: 'right' });
+      const metadata = rows[0];
+      if (metadata?.inspectorName || metadata?.reviewerName || metadata?.approverName) {
+        pdf.setFontSize(5.1);
+        pdf.text(`Elaborado: ${metadata.inspectorName || '—'}  ·  Revisado: ${metadata.reviewerName || '—'}  ·  Aprobado: ${metadata.approverName || '—'}`, 71, 33);
+      }
     };
     drawHeader();
 
@@ -503,9 +526,7 @@ async function exportPdf() {
     if (isConsolidated) {
       pdf.setFont('helvetica', 'bold'); pdf.setFontSize(7); pdf.setTextColor(...palette.darkBlue);
       pdf.text('DISTRIBUCIÓN POR ÁREA Y UBICACIÓN', 9, 68);
-      const summaryCards = [...AREAS.map(area => ({ label: areaTitle(area), value: areaCounts[area] })), {
-        label: 'Silo de hielo', value: rows.filter(row => /silo\s+de\s+hielo/i.test(row.location || '')).length
-      }];
+      const summaryCards = AREAS.map(area => ({ label: areaTitle(area), value: areaCounts[area] }));
       summaryCards.forEach((card, index) => {
         const col = index % 3, row = Math.floor(index / 3), x = 9 + col * 65, y = 71 + row * 13;
         pdf.setFillColor(...palette.pale); pdf.setDrawColor(...palette.line); pdf.roundedRect(x, y, 62, 11, 1.5, 1.5, 'FD');
@@ -537,15 +558,15 @@ async function exportPdf() {
       } catch { imageData.set(key, null); }
     }));
     pdf.autoTable({
-      startY: tableStartY, showHead: 'everyPage', head: [['FECHA', 'ÁREA / UBICACIÓN', 'HALLAZGO / ACCIÓN / SEGUIMIENTO', 'RESPONSABLE', 'DÍAS', 'ESTADO', 'FOTOS']],
-      body: rows.map(row => [dateLabel(row.inspectedAt), `${row.area}\n${row.location}`, `${row.description}${row.notes ? `\nSeguimiento: ${row.notes}` : ''}`, row.department || '—', elapsedDays(row.notificationDate), STATUS[row.status] || '—', (row.photos || []).length ? '' : 'Sin evidencia']),
+      startY: tableStartY, showHead: 'everyPage', head: [['FECHA / NOTIFICACIÓN', 'ÁREA / UBICACIÓN', 'HALLAZGO / ACCIÓN / SEGUIMIENTO', 'RESPONSABLE', 'DÍAS', 'ESTADO', 'FOTOS']],
+      body: rows.map(row => [`${dateLabel(row.inspectedAt)}\nNotif.: ${row.notificationDateSource || dateLabel(row.notificationDate)}`, `${areaTitle(row.area)}${row.sourceSection ? `\n${row.sourceSection}` : ''}\n${row.location}`, `${row.description}${row.notes ? `\n${row.notes}` : ''}`, row.department || '—', daysOpen(row), STATUS[row.status] || '—', (row.photos || []).length ? '' : 'Sin evidencia']),
       theme: 'grid', styles: { font: 'helvetica', fontSize: 6.5, cellPadding: 1.8, textColor: palette.ink, lineColor: palette.line, lineWidth: .18, minCellHeight: 16, valign: 'middle', overflow: 'linebreak' },
       headStyles: { fillColor: palette.darkBlue, textColor: palette.white, fontSize: 6.1, fontStyle: 'bold', halign: 'left', cellPadding: 2.3 },
       alternateRowStyles: { fillColor: palette.pale },
       columnStyles: {
-        0: { cellWidth: 17, fontSize: 6.1 }, 1: { cellWidth: 31, fontStyle: 'bold', fontSize: 6.1 }, 2: { cellWidth: 48 },
-        3: { cellWidth: 25, fontSize: 6 }, 4: { cellWidth: 12, halign: 'center', fontSize: 6 },
-        5: { cellWidth: 23, halign: 'center', fontStyle: 'bold', fontSize: 6 }, 6: { cellWidth: 36, halign: 'center', fontSize: 6, textColor: palette.muted }
+        0: { cellWidth: 22, fontSize: 5.8 }, 1: { cellWidth: 31, fontStyle: 'bold', fontSize: 6.1 }, 2: { cellWidth: 46 },
+        3: { cellWidth: 24, fontSize: 6 }, 4: { cellWidth: 12, halign: 'center', fontSize: 6 },
+        5: { cellWidth: 22, halign: 'center', fontStyle: 'bold', fontSize: 6 }, 6: { cellWidth: 35, halign: 'center', fontSize: 6, textColor: palette.muted }
       },
       margin: { top: 38, left: 9, right: 9, bottom: 19 },
       willDrawPage: () => drawHeader(),
@@ -660,4 +681,3 @@ $('mobileMenu').addEventListener('click', () => $('sidebar').classList.toggle('o
 document.addEventListener('keydown', event => { if (event.key === 'Escape') $('sidebar').classList.remove('open'); });
 
 initialize();
-
