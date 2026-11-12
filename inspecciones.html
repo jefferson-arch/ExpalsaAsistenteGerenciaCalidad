@@ -3,20 +3,17 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#12263f">
+  <meta name="theme-color" content="#174e3d">
   <meta name="description" content="Registro de inspecciones en las instalaciones de EXPALSA">
   <title>Inspecciones de instalaciones · EXPALSA</title>
   <link rel="icon" href="favicon.png">
   <link rel="stylesheet" href="inspecciones.css">
-  <script src="https://cdn.jsdelivr.net/npm/jspdf@4.2.1/dist/jspdf.umd.min.js" defer></script>
-  <script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@5.0.8/dist/jspdf.plugin.autotable.min.js" defer></script>
   <script src="firebase-config.js"></script>
   <script type="module" src="inspecciones.js"></script>
 </head>
 <body>
   <section id="authGate" class="auth-gate">
     <div class="auth-card">
-      <a class="back-link" href="index.html">← Volver a EXPALSA Calidad</a>
       <img src="logoexpalsa.png" alt="EXPALSA" class="auth-logo">
       <p class="eyebrow">SISTEMA DE GESTIÓN DE CALIDAD</p>
       <h1>Reporte de inspección</h1>
@@ -26,6 +23,8 @@
         <label>Contraseña<input name="password" type="password" autocomplete="current-password" required></label>
         <button class="button primary full" type="submit">Iniciar sesión <span aria-hidden="true">↗</span></button>
       </form>
+      <button class="button secondary full demo-entry" id="demoButton" type="button">Cargar ejemplo de inspección</button>
+      <p class="demo-caption">Ejemplo local basado en la última inspección. No se guarda en Firebase.</p>
       <p id="authMessage" class="notice" role="status">Verificando conexión con Firebase…</p>
     </div>
   </section>
@@ -44,6 +43,7 @@
         <div class="breadcrumbs"><span>EXPALSA</span><span class="crumb-slash">/</span><strong id="currentCrumb">Inicio</strong></div>
         <div class="top-actions">
           <span class="user-chip"><i id="userInitial">I</i><span id="userEmail"></span></span>
+          <button class="button secondary" id="resetDemoButton" type="button" hidden>Recargar ejemplo</button>
           <button class="button plain" id="logoutButton" type="button">Salir</button>
         </div>
       </header>
@@ -97,9 +97,9 @@
         <div class="form-grid">
           <label>Área de inspección<select name="area" required><option value="">Selecciona un área</option><option>PLANTA</option><option>EXTERIORES</option><option>BODEGAS</option><option>DESECHOS</option><option>DESPACHO</option><option>OTROS</option></select></label>
           <label>Fecha de inspección<input name="inspectedAt" type="date" required></label>
-          <label class="span-two">Ubicación o proceso<input name="location" maxlength="160" placeholder="Ej. Galpón 1 · Recepción de materia prima" required></label>
+          <label class="span-two">Ubicación o proceso<select name="location" id="locationSelect" required><option value="">Selecciona una ubicación</option></select><input name="locationOther" id="locationOther" maxlength="160" placeholder="Escribe la ubicación" hidden disabled></label>
           <label class="span-two">Descripción del hallazgo<textarea name="description" maxlength="1800" placeholder="Describe lo observado de forma concreta" required></textarea></label>
-          <label>Departamento responsable<input name="department" maxlength="100" placeholder="Ej. Mantenimiento" required></label>
+          <label>Departamento responsable<select name="department" id="departmentSelect" required><option value="">Selecciona un departamento</option><option>MANTENIMIENTO</option><option>PRODUCCIÓN</option><option>CALIDAD</option><option>SISTEMAS</option><option>DESPACHO Y LOGÍSTICA</option><option>SERVICIO GENERAL</option><option>BODEGA</option><option>RRHH COMEDOR</option><option>SEGURIDAD INDUSTRIAL</option><option>REFRIGERACIÓN</option><option>MANTENIMIENTO - PRODUCCIÓN</option><option>MANTENIMIENTO - CALIDAD</option><option>SERVICIO GENERAL COMEDOR</option><option value="__other__">Otro departamento…</option></select><input name="departmentOther" id="departmentOther" maxlength="100" placeholder="Escribe el departamento" hidden disabled></label>
           <label>Fecha de notificación<input name="notificationDate" type="date"></label>
           <label>Estado<select name="status" required><option value="nueva">Nueva observación</option><option value="no_cumple">No cumple</option><option value="parcial">Parcialmente cumple</option><option value="cumple">Cumple</option></select></label>
           <label class="span-two">Acción / comentarios<textarea name="notes" maxlength="1200" placeholder="Medida correctiva, seguimiento o comentario"></textarea></label>
