@@ -57,8 +57,6 @@
 
         <section id="dashboardView" class="view dashboard-view">
           <div class="dashboard-topline"><div><span class="live-dot"></span> HISTORIAL DE INSPECCIONES</div><span id="updatedAtLabel">Datos sincronizados con Firebase</span></div>
-          <article class="panel alert-panel"><div class="panel-heading"><div><p class="eyebrow">SEGUIMIENTO PRIORITARIO</p><h2>Alertas</h2><p class="panel-subtitle">Primero incumplimientos, luego observaciones parciales.</p></div><span id="alertTotal" class="alert-count">0</span></div><div class="table-wrap"><table class="records-table priority-table"><thead><tr><th>PRIORIDAD</th><th>INSPECCIÓN</th><th>ÁREA / UBICACIÓN</th><th>HALLAZGO</th><th>ESTADO</th><th>ACCIÓN</th></tr></thead><tbody id="alertsBody"></tbody></table></div><div id="alertsEmpty" class="inline-empty" hidden>No hay observaciones prioritarias pendientes.</div></article>
-          <article class="panel corrective-panel"><div class="panel-heading"><div><p class="eyebrow">TRAZABILIDAD</p><h2>Acciones correctivas registradas</h2></div><span id="correctionTotal" class="muted"></span></div><div class="table-wrap"><table class="records-table corrective-table"><thead><tr><th>FECHA</th><th>INSPECCIÓN / HALLAZGO</th><th>ACCIÓN Y EVIDENCIA</th><th>CAMBIO DE ESTADO</th><th>REGISTRÓ</th></tr></thead><tbody id="correctionsBody"></tbody></table></div><div id="correctionsEmpty" class="inline-empty" hidden>Todavía no hay acciones correctivas.</div></article>
           <div class="stat-grid">
             <article class="stat-card stat-total"><div class="stat-mark">▦</div><p>Hallazgos registrados</p><strong id="statTotal">0</strong><span>en todas las instalaciones</span></article>
             <article class="stat-card"><div class="stat-mark mark-green">✓</div><p>Cumple</p><strong id="statCompliant">0</strong><span>verificados</span></article>
@@ -74,6 +72,11 @@
           </div>
 
           <article class="panel recent-panel"><div class="panel-heading"><div><p class="eyebrow">SEGUIMIENTO</p><h2>Observaciones recientes</h2></div><button class="text-button" data-open-tab="Historial" type="button">Ver historial <span>→</span></button></div><div id="recentRows"></div></article>
+        </section>
+
+        <section id="alertsView" class="view alerts-view" hidden>
+          <article class="panel alert-panel"><div class="panel-heading"><div><p class="eyebrow">SEGUIMIENTO PRIORITARIO</p><h2>Observaciones pendientes</h2><p class="panel-subtitle">Primero incumplimientos, luego observaciones parciales.</p></div><span id="alertTotal" class="alert-count">0</span></div><div class="table-wrap"><table class="records-table priority-table"><thead><tr><th>PRIORIDAD</th><th>INSPECCIÓN</th><th>ÁREA / UBICACIÓN</th><th>HALLAZGO</th><th>ESTADO</th><th>ACCIÓN</th></tr></thead><tbody id="alertsBody"></tbody></table></div><div id="alertsEmpty" class="inline-empty" hidden>No hay observaciones prioritarias pendientes.</div></article>
+          <article class="panel corrective-panel"><div class="panel-heading"><div><p class="eyebrow">TRAZABILIDAD</p><h2>Acciones correctivas registradas</h2></div><span id="correctionTotal" class="muted"></span></div><div class="table-wrap"><table class="records-table corrective-table"><thead><tr><th>FECHA</th><th>INSPECCIÓN / HALLAZGO</th><th>ACCIÓN Y EVIDENCIA</th><th>CAMBIO DE ESTADO</th><th>REGISTRÓ</th></tr></thead><tbody id="correctionsBody"></tbody></table></div><div id="correctionsEmpty" class="inline-empty" hidden>Todavía no hay acciones correctivas.</div></article>
         </section>
 
         <section id="listView" class="view list-view" hidden>
