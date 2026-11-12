@@ -229,13 +229,13 @@ function renderDashboard() {
      const areaRows = rows.filter(row => row.area === area), count = areaRows.length;
      const segments = ['cumple','no_cumple','parcial','nueva'].map(status => {
        const value = areaRows.filter(row => row.status === status).length;
-       return `<span class="bar-segment segment-${status}" style="width:${count ? value / count * 100 : 0}%" title="${escapeHtml(STATUS[status])}: ${value}"></span>`;
+       return `<span class="bar-segment segment-${status}" style="width:${rows.length ? value / rows.length * 100 : 0}%" title="${escapeHtml(STATUS[status])}: ${value}"></span>`;
      }).join('');
      const label = ['cumple','no_cumple','parcial','nueva'].map(status => `${STATUS[status]}: ${areaRows.filter(row => row.status === status).length}`).join(', ');
      return `<div class="category-row"><span>${escapeHtml(areaTitle(area))}</span><div class="bar-track segmented-bar" role="img" aria-label="${escapeHtml(areaTitle(area))}: ${escapeHtml(label)}">${segments}</div><b>${count}</b></div>`;
    }).join('');
   const recent = [...rows].sort((a, b) => b.inspectedAt.localeCompare(a.inspectedAt)).slice(0, 5);
-  $('recentRows').innerHTML = recent.length ? `<div class="recent-list">${recent.map(row => `<div class="recent-row"><span class="recent-date">${escapeHtml(dateLabel(row.inspectedAt))}</span><span class="recent-finding">${escapeHtml(row.description)}</span><span class="recent-location">${escapeHtml(row.area)} · ${escapeHtml(row.location)}</span><span class="status-pill status-${escapeHtml(row.status)}">${escapeHtml(STATUS[row.status] || '')}</span><button class="row-actions" type="button" data-edit="${escapeHtml(row.id)}" aria-label="Editar observación">↗</button></div>`).join('')}</div>` : '<div class="empty-state"><div class="empty-glyph">▧</div><h3>Tu historial empieza aquí</h3><p>Las observaciones guardadas aparecerán en este resumen.</p></div>';
+  $('recentRows').innerHTML = recent.length ? `<div class="recent-list"><div class="recent-header" aria-hidden="true"><span>Fecha</span><span>Hallazgo</span><span class="recent-location">Área / ubicación</span><span>Estado</span><span>Registró</span><span></span></div>${recent.map(row => `<div class="recent-row"><span class="recent-date">${escapeHtml(dateLabel(row.inspectedAt))}</span><span class="recent-finding">${escapeHtml(row.description)}</span><span class="recent-location">${escapeHtml(row.area)} · ${escapeHtml(row.location)}</span><span class="status-pill status-${escapeHtml(row.status)}">${escapeHtml(STATUS[row.status] || '')}</span><span class="recent-registered" title="${escapeHtml(row.inspectorName || row.createdByName || '—')}">${escapeHtml(row.inspectorName || row.createdByName || '—')}</span><button class="row-actions" type="button" data-edit="${escapeHtml(row.id)}" aria-label="Editar observación">↗</button></div>`).join('')}</div>` : '<div class="empty-state"><div class="empty-glyph">▧</div><h3>Tu historial empieza aquí</h3><p>Las observaciones guardadas aparecerán en este resumen.</p></div>';
   const priorities = rows.filter(row => row.status === 'no_cumple' || row.status === 'parcial').sort((a, b) => (a.status === b.status ? (b.inspectedAt || '').localeCompare(a.inspectedAt || '') : a.status === 'no_cumple' ? -1 : 1));
   $('alertTotal').textContent = priorities.length;
   $('alertsBody').innerHTML = priorities.map(row => `<tr><td><span class="priority-mark ${row.status === 'no_cumple' ? 'priority-high' : 'priority-medium'}">${row.status === 'no_cumple' ? 'Alta' : 'Media'}</span></td><td><strong>${escapeHtml(row.inspectionNumber || inspectionNumber(row.inspectedAt))}</strong></td><td>${escapeHtml(areaTitle(row.area))}<span class="table-secondary">${escapeHtml(row.sourceSection ? `${row.sourceSection} · ` : '')}${escapeHtml(row.location)}</span></td><td><span class="finding-title">${escapeHtml(row.description)}</span></td><td><span class="status-pill status-${escapeHtml(row.status)}">${escapeHtml(STATUS[row.status])}</span></td><td><button class="button corrective-action-button" data-correct="${escapeHtml(row.id)}" type="button">Registrar corrección</button></td></tr>`).join('');
@@ -861,7 +861,6 @@ async function exportPdf() {
         6: { cellWidth: 21, halign: 'center', fontStyle: 'bold', fontSize: 5.8 }, 7: { cellWidth: 43, halign: 'center', fontSize: 5.8, textColor: palette.muted }
       },
       margin: { top: 38, left: 9, right: 9, bottom: 19 },
-      willDrawPage: () => drawHeader(),
       didParseCell: data => {
         if (data.section !== 'body') return;
         const row = rows[data.row.index];
