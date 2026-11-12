@@ -26,7 +26,7 @@ const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&':
 const dateLabel = value => value ? new Date(`${value}T12:00:00`).toLocaleDateString('es-EC', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
 const elapsedDays = value => value ? Math.floor((Date.UTC(new Date().getFullYear(), new Date().getMonth(), new Date().getDate()) - Date.parse(`${value}T00:00:00Z`)) / 86400000) : '—';
 const daysOpen = row => Number.isFinite(row.daysOpenSnapshot) ? row.daysOpenSnapshot : elapsedDays(row.notificationDate);
-const state = { user: null, role: '', demo: false, tab: 'Inicio', selectedInspectionDate: null, selectedInspectionId: null, activeInspectionId: null, activeInspectionNumber: null, records: [], inspectionRuns: [], corrections: [], progress: {}, unsubscribe: null, pendingPhotos: [], editingPhotos: [], correctionPhotos: [], correctingObservationId: null, toastTimer: null };
+const state = { user: null, role: '', demo: false, tab: 'Inicio', selectedInspectionDate: null, selectedInspectionId: null, activeInspectionId: null, activeInspectionNumber: null, records: [], inspectionRuns: [], corrections: [], progress: {}, unsubscribe: null, pendingPhotos: [], editingPhotos: [], correctionPhotos: [], correctingObservationId: null, viewingPhoto: null, toastTimer: null };
 let firebaseApi;
 let inspectionModulesPromise;
 let pdfLibrariesPromise;
@@ -39,11 +39,18 @@ function syncOtherChoice(select, input) {
 
 function fillLocationOptions(area, selected = '') {
   const select = $('locationSelect'), other = $('locationOther');
-  const options = LOCATIONS[area] || LOCATIONS.OTROS;
-  select.replaceChildren(new Option('Selecciona una ubicación', ''), ...options.map(value => new Option(value, value)), new Option('Otra ubicación…', '__other__'));
+  const used = state.demo ? new Set() : new Set(state.records
+    .filter(row => row.area === area && normalizeLocation(row.location) !== normalizeLocation(selected))
+    .map(row => normalizeLocation(row.location)));
+  const options = (LOCATIONS[area] || LOCATIONS.OTROS).filter(value => !used.has(normalizeLocation(value)));
+  select.replaceChildren(new Option(options.length ? 'Selecciona una ubicación disponible' : 'No hay ubicaciones disponibles; registra otra', ''), ...options.map(value => new Option(value, value)), new Option('Otra ubicación…', '__other__'));
   if (selected && !options.includes(selected)) { select.value = '__other__'; other.value = selected; }
   else { select.value = selected; other.value = ''; }
   syncOtherChoice(select, other);
+}
+
+function normalizeLocation(value) {
+  return String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().replace(/\s+/g, ' ').toLocaleLowerCase('es');
 }
 
 function fillDepartment(selected = '') {
@@ -180,7 +187,7 @@ function render() {
       <td class="department-cell">${escapeHtml(row.inspectorName || row.createdByName || '—')}</td>
       <td>${escapeHtml(daysOpen(row))}</td>
       <td><span class="status-pill status-${escapeHtml(row.status)}">${escapeHtml(STATUS[row.status] || 'Sin estado')}</span></td>
-      <td><span class="photo-count">${(row.photos || []).length ? `▧ ${(row.photos || []).length} foto${row.photos.length > 1 ? 's' : ''}` : '—'}</span></td>
+      <td>${(row.photos || []).length ? `<button class="photo-count photo-open-button" type="button" data-view-photo="${escapeHtml(row.id)}">▧ ${(row.photos || []).length} foto${row.photos.length > 1 ? 's' : ''}</button>` : '<span class="photo-count">—</span>'}</td>
       <td><button class="row-actions" data-edit="${escapeHtml(row.id)}" type="button" aria-label="${row.status === 'no_cumple' || row.status === 'parcial' ? 'Registrar acción correctiva' : 'Ver observación'}">${row.status === 'no_cumple' || row.status === 'parcial' ? '⚑' : '↗'}</button></td>
     </tr>`).join('');
   }
@@ -212,11 +219,15 @@ function renderDashboard() {
   const second = first + counts.no_cumple / total * 100;
   const third = second + counts.parcial / total * 100;
   $('statusDonut').style.background = rows.length ? `conic-gradient(#3b9875 0% ${first}%,#cd5a55 ${first}% ${second}%,#ca9039 ${second}% ${third}%,#8997a7 ${third}% 100%)` : 'conic-gradient(#e2e8ed 0% 100%)';
-  $('categorySummary').innerHTML = AREAS.map(area => {
-    const count = rows.filter(row => row.area === area).length;
-    const pct = rows.length ? count / rows.length * 100 : 0;
-    return `<div class="category-row"><span>${areaTitle(area)}</span><div class="bar-track"><div class="bar-fill" style="width:${pct}%"></div></div><b>${count}</b></div>`;
-  }).join('');
+   $('categorySummary').innerHTML = AREAS.map(area => {
+     const areaRows = rows.filter(row => row.area === area), count = areaRows.length;
+     const segments = ['cumple','no_cumple','parcial','nueva'].map(status => {
+       const value = areaRows.filter(row => row.status === status).length;
+       return `<span class="bar-segment segment-${status}" style="width:${count ? value / count * 100 : 0}%" title="${escapeHtml(STATUS[status])}: ${value}"></span>`;
+     }).join('');
+     const label = ['cumple','no_cumple','parcial','nueva'].map(status => `${STATUS[status]}: ${areaRows.filter(row => row.status === status).length}`).join(', ');
+     return `<div class="category-row"><span>${escapeHtml(areaTitle(area))}</span><div class="bar-track segmented-bar" role="img" aria-label="${escapeHtml(areaTitle(area))}: ${escapeHtml(label)}">${segments}</div><b>${count}</b></div>`;
+   }).join('');
   const recent = [...rows].sort((a, b) => b.inspectedAt.localeCompare(a.inspectedAt)).slice(0, 5);
   $('recentRows').innerHTML = recent.length ? `<div class="recent-list">${recent.map(row => `<div class="recent-row"><span class="recent-date">${escapeHtml(dateLabel(row.inspectedAt))}</span><span class="recent-finding">${escapeHtml(row.description)}</span><span class="recent-location">${escapeHtml(row.area)} · ${escapeHtml(row.location)}</span><span class="status-pill status-${escapeHtml(row.status)}">${escapeHtml(STATUS[row.status] || '')}</span><button class="row-actions" type="button" data-edit="${escapeHtml(row.id)}" aria-label="Editar observación">↗</button></div>`).join('')}</div>` : '<div class="empty-state"><div class="empty-glyph">▧</div><h3>Tu historial empieza aquí</h3><p>Las observaciones guardadas aparecerán en este resumen.</p></div>';
   const priorities = rows.filter(row => row.status === 'no_cumple' || row.status === 'parcial').sort((a, b) => (a.status === b.status ? (b.inspectedAt || '').localeCompare(a.inspectedAt || '') : a.status === 'no_cumple' ? -1 : 1));
@@ -461,6 +472,86 @@ function drawPhotoPreview() {
   preview.innerHTML = [...state.editingPhotos.map(photo => ({ ...photo, existing: true })), ...state.pendingPhotos].map((photo, index) => `<div class="photo-thumb"><img src="${escapeHtml(photo.preview || photo.previewUrl)}" alt="Evidencia ${index + 1}">${photo.existing ? '' : `<button type="button" data-remove-photo="${index - state.editingPhotos.length}" aria-label="Quitar foto">×</button>`}</div>`).join('');
 }
 
+function canManagePhoto(row, photo) {
+  const run = state.inspectionRuns.find(item => item.id === row?.inspectionId);
+  return !state.demo && run?.status === 'en_curso' && (state.role === 'admin' || photo?.uploadedBy === state.user?.uid);
+}
+
+async function openPhotoViewer(rowId, photoIndex = 0) {
+  const row = state.records.find(item => item.id === rowId), photos = row?.photos || [];
+  if (!row || !photos.length) return;
+  const index = Math.max(0, Math.min(Number(photoIndex) || 0, photos.length - 1));
+  const token = crypto.randomUUID();
+  state.viewingPhoto = { rowId, index, token };
+  $('photoViewerImage').removeAttribute('src');
+  $('photoViewerImage').alt = `Evidencia fotográfica de ${row.location}`;
+  $('photoViewerCaption').textContent = `${areaTitle(row.area)} · ${row.location} · Foto ${index + 1} de ${photos.length}`;
+  $('photoViewerPosition').textContent = `${index + 1} / ${photos.length}`;
+  $('photoPrevious').disabled = index === 0;
+  $('photoNext').disabled = index >= photos.length - 1;
+  const photo = photos[index], editable = canManagePhoto(row, photo);
+  $('photoReplaceButton').hidden = !editable;
+  $('photoDeleteButton').hidden = !editable;
+  $('photoManageHint').textContent = state.demo ? 'Vista de ejemplo; no modifica datos de Firebase.' : editable ? 'La sustitución o eliminación actualiza la evidencia de esta observación.' : 'La evidencia solo puede modificarse en una inspección en curso, por quien la cargó o un administrador.';
+  if (!$('photoDialog').open) $('photoDialog').showModal();
+  try {
+    let source = photo.preview || '';
+    if (!source && photo.previewUrl) {
+      const response = await fetch(photo.previewUrl);
+      if (!response.ok) throw new Error('No se pudo abrir la evidencia de ejemplo.');
+      source = await dataUrl(await response.blob());
+    }
+    if (!source && photo.path) {
+      await loadInspectionModules();
+      const bytes = await firebaseApi.getBytes(firebaseApi.ref(firebaseApi.storage, photo.path));
+      source = await dataUrl(new Blob([bytes], { type: 'image/jpeg' }));
+    }
+    if (state.viewingPhoto?.token === token) {
+      if (!source) throw new Error('La foto no tiene una ruta de evidencia válida.');
+      $('photoViewerImage').src = source;
+    }
+  } catch (error) {
+    $('photoViewerCaption').textContent = friendlyError(error);
+  }
+}
+
+async function changeCurrentPhoto(replacement = null) {
+  const current = state.viewingPhoto, row = state.records.find(item => item.id === current?.rowId), photo = row?.photos?.[current?.index];
+  if (!row || !photo || !canManagePhoto(row, photo)) { showToast('Solo el autor o un administrador puede cambiar esta foto en una inspección en curso.', true); return; }
+  const button = replacement ? $('photoReplaceButton') : $('photoDeleteButton');
+  button.disabled = true;
+  try {
+    const { db, doc, updateDoc, serverTimestamp, ref, uploadBytes, deleteObject } = firebaseApi;
+    const photos = [...row.photos];
+    let replacementPath = '';
+    if (replacement) {
+      const blob = await fileAsJpeg(replacement), name = replacement.name || 'evidencia.jpg';
+      replacementPath = `expalsa_inspecciones/${state.user.uid}/${row.id}/${crypto.randomUUID()}.jpg`;
+      await uploadBytes(ref(firebaseApi.storage, replacementPath), blob, { contentType: 'image/jpeg', customMetadata: { origin: 'gallery', uploadedBy: state.user.uid } });
+      photos[current.index] = { path: replacementPath, name: name.slice(0, 120), uploadedBy: state.user.uid, origin: 'gallery' };
+    } else {
+      photos.splice(current.index, 1);
+    }
+    try {
+      await updateDoc(doc(db, COLLECTION, row.id), { photos, updatedBy: state.user.uid, updatedByName: userLabel(), updatedAt: serverTimestamp() });
+    } catch (error) {
+      if (replacementPath) await deleteObject(ref(firebaseApi.storage, replacementPath)).catch(() => {});
+      throw error;
+    }
+    row.photos = photos; row.updatedBy = state.user.uid; row.updatedByName = userLabel(); row.updatedAt = new Date();
+    if (photo.path) await deleteObject(ref(firebaseApi.storage, photo.path)).catch(() => {});
+    if (!photos.length) { $('photoDialog').close(); state.viewingPhoto = null; }
+    else { state.viewingPhoto.index = Math.min(current.index, photos.length - 1); await openPhotoViewer(row.id, state.viewingPhoto.index); }
+    render(); showToast(replacement ? 'Foto reemplazada en Firebase.' : 'Foto eliminada de la evidencia.');
+  } catch (error) { showToast(friendlyError(error), true); }
+  finally { button.disabled = false; }
+}
+
+function stepPhoto(direction) {
+  if (!state.viewingPhoto) return;
+  openPhotoViewer(state.viewingPhoto.rowId, state.viewingPhoto.index + direction);
+}
+
 async function handlePhotoFiles(input) {
   const files = [...(input.files || [])]; input.value = '';
   if (!files.length) return;
@@ -590,6 +681,10 @@ async function saveInspection(event) {
     const current = state.records.find(item => item.id === id);
     const run = state.inspectionRuns.find(item => item.id === (current?.inspectionId || state.activeInspectionId));
     if (!state.demo && (!run || run.status !== 'en_curso')) throw new Error('Guarda las observaciones dentro de una inspección en curso.');
+    if (!state.demo && !current && state.records.some(row => row.area === fields.area && normalizeLocation(row.location) === normalizeLocation(fields.location))) {
+      fillLocationOptions(fields.area);
+      throw new Error('Esa ubicación o proceso ya tiene una observación registrada. Selecciona una ubicación disponible.');
+    }
     if (run?.inspectedAt) fields.inspectedAt = run.inspectedAt;
     if (state.demo) {
       const photos = [...state.editingPhotos, ...state.pendingPhotos.map(photo => ({ preview: photo.preview, name: photo.name, origin: photo.origin }))];
@@ -846,6 +941,8 @@ document.addEventListener('click', event => {
     if (run?.status === 'en_curso') { state.activeInspectionId = run.id; state.activeInspectionNumber = run.inspectionNumber; }
     render(); return;
   }
+  const viewPhoto = event.target.closest('[data-view-photo]');
+  if (viewPhoto) { openPhotoViewer(viewPhoto.dataset.viewPhoto); return; }
   if (event.target.closest('#backToHistory')) { state.selectedInspectionDate = null; state.selectedInspectionId = null; render(); return; }
   const edit = event.target.closest('[data-edit]'); if (edit) { openEditDialog(edit.dataset.edit); return; }
   const correct = event.target.closest('[data-correct]'); if (correct) { openCorrectionDialog(correct.dataset.correct); return; }
@@ -876,6 +973,13 @@ $('closeInspectionButton').addEventListener('click', closeInspection);
 $('exportButton').addEventListener('click', exportPdf);
 $('inspectionForm').addEventListener('submit', saveInspection);
 $('correctionForm').addEventListener('submit', saveCorrection);
+$('photoClose').addEventListener('click', () => $('photoDialog').close());
+$('photoPrevious').addEventListener('click', () => stepPhoto(-1));
+$('photoNext').addEventListener('click', () => stepPhoto(1));
+$('photoReplaceButton').addEventListener('click', () => $('photoReplaceInput').click());
+$('photoReplaceInput').addEventListener('change', event => { const file = event.currentTarget.files?.[0]; event.currentTarget.value = ''; if (file) changeCurrentPhoto(file); });
+$('photoDeleteButton').addEventListener('click', () => { if (window.confirm('¿Eliminar esta foto de la evidencia de la observación?')) changeCurrentPhoto(); });
+$('photoDialog').addEventListener('close', () => { state.viewingPhoto = null; $('photoViewerImage').removeAttribute('src'); });
 $('correctionCamera').addEventListener('change', event => handleCorrectionPhotoFiles(event.currentTarget));
 $('correctionGallery').addEventListener('change', event => handleCorrectionPhotoFiles(event.currentTarget));
 $('correctionPhotoPreview').addEventListener('click', event => { const remove = event.target.closest('[data-remove-correction-photo]'); if (remove) { state.correctionPhotos.splice(Number(remove.dataset.removeCorrectionPhoto), 1); drawCorrectionPhotoPreview(); } });
