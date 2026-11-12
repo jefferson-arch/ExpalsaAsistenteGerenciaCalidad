@@ -225,7 +225,7 @@ function renderDashboard() {
   $('alertsEmpty').hidden = priorities.length > 0;
   const actions = state.corrections;
   $('correctionTotal').textContent = `${actions.length} ${actions.length === 1 ? 'acción' : 'acciones'}`;
-  $('correctionsBody').innerHTML = actions.map(action => { const actionDate = action.createdAt?.toDate?.(); return `<tr><td>${escapeHtml(actionDate ? actionDate.toLocaleDateString('es-EC') : dateLabel(action.actionDate))}</td><td><strong>${escapeHtml(action.inspectionNumber || '—')}</strong><span class="table-secondary">${escapeHtml(areaTitle(action.area))} · ${escapeHtml(action.location || '')}</span><span class="table-secondary">${escapeHtml(action.description || '')}</span></td><td><span class="finding-title">${escapeHtml(action.note || '')}</span><span class="table-secondary">${(action.photos || []).length} evidencia${(action.photos || []).length === 1 ? '' : 's'}</span></td><td><span class="status-pill status-${escapeHtml(action.previousStatus)}">${escapeHtml(STATUS[action.previousStatus] || '')}</span> → <span class="status-pill status-${escapeHtml(action.newStatus)}">${escapeHtml(STATUS[action.newStatus] || '')}</span></td><td>${escapeHtml(action.byName || '—')}</td></tr>`; }).join('');
+  $('correctionsBody').innerHTML = actions.map(action => { const actionDate = action.createdAt?.toDate?.(); const finding = state.records.find(row => row.id === action.observationId) || action; return `<tr><td>${escapeHtml(actionDate ? actionDate.toLocaleDateString('es-EC') : dateLabel(action.actionDate))}</td><td><strong>${escapeHtml(finding.inspectionNumber || action.inspectionNumber || '—')}</strong><span class="table-secondary">${escapeHtml(areaTitle(finding.area))} · ${escapeHtml(finding.location || '')}</span><span class="table-secondary">${escapeHtml(finding.description || '')}</span></td><td><span class="finding-title">${escapeHtml(action.note || '')}</span><span class="table-secondary">${(action.photos || []).length} evidencia${(action.photos || []).length === 1 ? '' : 's'}</span></td><td><span class="status-pill status-${escapeHtml(action.previousStatus)}">${escapeHtml(STATUS[action.previousStatus] || '')}</span> → <span class="status-pill status-${escapeHtml(action.newStatus)}">${escapeHtml(STATUS[action.newStatus] || '')}</span></td><td>${escapeHtml(action.byName || '—')}</td></tr>`; }).join('');
   $('correctionsEmpty').hidden = actions.length > 0;
 }
 
@@ -339,7 +339,7 @@ async function createInspection(area = 'PLANTA', openForm = true) {
     const { db, doc, collection, setDoc, serverTimestamp } = firebaseApi;
     const runRef = doc(collection(db, RUNS));
     const inspectionNo = `INS-${inspectedAt.replace(/\D/g, '')}-${runRef.id.slice(0, 5).toUpperCase()}`;
-    const run = { inspectionNumber: inspectionNo, inspectedAt, status: 'en_curso', openedByUid: state.user.uid, openedByEmail: state.user.email, openedByName: name, participants: [name], createdBy: state.user.uid, createdByName: name, createdAt: serverTimestamp(), updatedBy: state.user.uid, updatedByName: name, updatedAt: serverTimestamp() };
+    const run = { inspectionNumber: inspectionNo, inspectedAt, status: 'en_curso', openedByUid: state.user.uid, openedByEmail: state.user.email, openedByName: name, participants: [name], createdBy: state.user.uid, createdAt: serverTimestamp(), updatedBy: state.user.uid, updatedByName: name, updatedAt: serverTimestamp() };
     await setDoc(runRef, run);
     state.inspectionRuns.unshift({ id: runRef.id, ...run, inspectionNumber: inspectionNo });
     state.activeInspectionId = runRef.id; state.activeInspectionNumber = inspectionNo;
@@ -531,8 +531,7 @@ async function saveCorrection(event) {
         const previousStatus = snapshot.data().status;
         if (newStatus === previousStatus) throw new Error('Esta observación ya tiene el estado seleccionado.');
         transaction.update(observationRef, { status: newStatus, lastCorrectionId: actionRef.id, lastCorrectionNote: note, updatedBy: state.user.uid, updatedByName: name, updatedAt: serverTimestamp() });
-        const { id: ignoredId, actionDate: ignoredDate, ...actionData } = action;
-        transaction.set(actionRef, { ...actionData, previousStatus, createdBy: state.user.uid, createdByName: name, createdAt: serverTimestamp() });
+        transaction.set(actionRef, { observationId: row.id, previousStatus, newStatus, note, photos: action.photos, byUid: state.user.uid, byName: name, createdAt: serverTimestamp() });
       });
     }
     $('correctionDialog').close(); state.correctionPhotos = []; state.correctingObservationId = null; render(); showToast(`Acción correctiva guardada. Estado actualizado a ${STATUS[newStatus]}.`);
@@ -610,7 +609,7 @@ async function saveInspection(event) {
     }
     const payload = {
       ...fields, inspectionId: current?.inspectionId || run.id, inspectionNumber: current?.inspectionNumber || run.inspectionNumber,
-      photos, inspectorName: current?.inspectorName || userLabel(), createdByName: current?.createdByName || userLabel(),
+      photos, inspectorName: current?.inspectorName || userLabel(),
       inspectorEmail: current?.inspectorEmail || state.user.email, inspectorUid: current?.inspectorUid || state.user.uid,
       createdBy: current?.createdBy || state.user.uid, createdAt: current?.createdAt || serverTimestamp(),
       updatedBy: state.user.uid, updatedByName: userLabel(), updatedAt: serverTimestamp(),
