@@ -74,7 +74,7 @@
         </section>
 
         <section id="listView" class="view list-view" hidden>
-          <div class="list-toolbar"><div><strong id="resultCount">0 observaciones</strong><span id="listScope">Todas las áreas</span></div><div class="toolbar-actions"><label class="search-box"><span>⌕</span><input id="quickSearch" type="search" placeholder="Buscar hallazgo, área…" aria-label="Buscar"></label><button id="filtersToggle" class="button filter-button" type="button">☷ Filtros <span id="filterCount" class="filter-count" hidden>0</span></button></div></div>
+          <div class="list-toolbar"><div><strong id="resultCount">0 observaciones</strong><span id="listScope">Todas las áreas</span></div><div class="toolbar-actions"><button id="backToHistory" class="button plain" type="button" hidden>← Historial</button><label class="search-box"><span>⌕</span><input id="quickSearch" type="search" placeholder="Buscar hallazgo, área…" aria-label="Buscar"></label><button id="filtersToggle" class="button filter-button" type="button">☷ Filtros <span id="filterCount" class="filter-count" hidden>0</span></button></div></div>
           <div id="advancedFilters" class="filter-panel" hidden>
             <label>Estado<select id="filterStatus"><option value="">Todos</option><option value="cumple">Cumple</option><option value="no_cumple">No cumple</option><option value="parcial">Parcial</option><option value="nueva">Nueva observación</option></select></label>
             <label>Departamento responsable<input id="filterDepartment" type="search" placeholder="Ej. Mantenimiento"></label>
@@ -82,7 +82,7 @@
             <label>Ordenar<select id="filterOrder"><option value="desc">Más recientes</option><option value="asc">Más antiguas</option></select></label>
             <button id="clearFilters" class="button plain" type="button">Limpiar</button>
           </div>
-          <div class="table-wrap"><table class="records-table"><thead><tr><th>FECHA / ÁREA</th><th>HALLAZGO</th><th>RESPONSABLE</th><th>DÍAS ABIERTOS</th><th>ESTADO</th><th>EVIDENCIA</th><th></th></tr></thead><tbody id="recordsBody"></tbody></table></div>
+          <div class="table-wrap"><table class="records-table"><thead id="recordsHead"><tr><th>FECHA / ÁREA</th><th>HALLAZGO</th><th>RESPONSABLE</th><th>DÍAS ABIERTOS</th><th>ESTADO</th><th>EVIDENCIA</th><th></th></tr></thead><tbody id="recordsBody"></tbody></table></div>
           <div id="emptyState" class="empty-state" hidden><div class="empty-glyph">⌕</div><h3>Aún no hay observaciones</h3><p>Registra el primer hallazgo de esta área o ajusta los filtros.</p><button class="button primary" data-create="true" type="button">Crear observación</button></div>
         </section>
       </section>

@@ -30,7 +30,7 @@ const $ = id => document.getElementById(id);
 const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const dateLabel = value => value ? new Date(`${value}T12:00:00`).toLocaleDateString('es-EC', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
 const elapsedDays = value => value ? Math.floor((Date.UTC(new Date().getFullYear(), new Date().getMonth(), new Date().getDate()) - Date.parse(`${value}T00:00:00Z`)) / 86400000) : '—';
-const state = { user: null, role: '', demo: false, tab: 'Inicio', records: [], unsubscribe: null, pendingPhotos: [], editingPhotos: [], toastTimer: null };
+const state = { user: null, role: '', demo: false, tab: 'Inicio', selectedInspectionDate: null, records: [], unsubscribe: null, pendingPhotos: [], editingPhotos: [], toastTimer: null };
 let firebaseApi;
 let inspectionModulesPromise;
 let pdfLibrariesPromise;
@@ -103,29 +103,63 @@ function recordsForView() {
   return [...records].sort((a, b) => $('filterOrder').value === 'asc' ? a.inspectedAt.localeCompare(b.inspectedAt) : b.inspectedAt.localeCompare(a.inspectedAt));
 }
 
+function inspectionNumber(date) { return date ? `INS-${date.replace(/\D/g, '')}` : 'INS-SF-001'; }
+
+function groupInspections(records) {
+  const groups = new Map();
+  for (const record of records) {
+    const key = record.inspectedAt || '';
+    if (!groups.has(key)) groups.set(key, { date: key, rows: [], areas: new Set(), statuses: Object.fromEntries(Object.keys(STATUS).map(status => [status, 0])) });
+    const group = groups.get(key);
+    group.rows.push(record); group.areas.add(record.area);
+    if (group.statuses[record.status] !== undefined) group.statuses[record.status]++;
+  }
+  return [...groups.values()].sort((a, b) => $('filterOrder').value === 'asc' ? a.date.localeCompare(b.date) : b.date.localeCompare(a.date));
+}
+
 function render() {
   if (!state.user) return;
   drawNavigation();
   const selected = SECTIONS.find(item => item.id === state.tab) || SECTIONS[0];
-  $('currentCrumb').textContent = selected.title;
-  $('pageTitle').textContent = selected.title;
-  $('pageDescription').textContent = selected.description;
+  const selectedInspection = state.tab === 'Historial' && state.selectedInspectionDate !== null;
+  const inspectionRows = selectedInspection ? recordsForView().filter(row => (row.inspectedAt || '') === state.selectedInspectionDate) : [];
+  const number = selectedInspection ? inspectionNumber(state.selectedInspectionDate) : '';
+  $('currentCrumb').textContent = selectedInspection ? number : selected.title;
+  $('pageTitle').textContent = selectedInspection ? number : selected.title;
+  $('pageDescription').textContent = selectedInspection
+    ? `${state.selectedInspectionDate ? dateLabel(state.selectedInspectionDate) : 'Fecha no registrada'} · ${inspectionRows.length} hallazgos · detalle por área`
+    : selected.description;
   $('pageEyebrow').textContent = state.tab === 'Historial' ? 'CONSULTA Y SEGUIMIENTO' : 'CONTROL DE INSTALACIONES';
   $('dashboardView').hidden = state.tab !== 'Inicio';
   $('listView').hidden = state.tab === 'Inicio';
-  $('listScope').textContent = AREAS.includes(state.tab) ? selected.title : 'Todas las áreas';
+  $('listScope').textContent = selectedInspection ? 'Detalle de inspección' : state.tab === 'Historial' ? 'Inspecciones por fecha' : AREAS.includes(state.tab) ? selected.title : 'Todas las áreas';
+  $('backToHistory').hidden = !selectedInspection;
   const filtered = recordsForView();
-  $('resultCount').textContent = `${filtered.length} ${filtered.length === 1 ? 'observación' : 'observaciones'}`;
-  $('recordsBody').innerHTML = filtered.map(row => `<tr>
-    <td><div class="date-area"><strong>${escapeHtml(dateLabel(row.inspectedAt))}</strong><span>${escapeHtml(row.area)} · ${escapeHtml(row.location)}</span></div></td>
-    <td><span class="finding-title">${escapeHtml(row.description)}</span>${row.notes ? `<span class="finding-note">${escapeHtml(row.notes)}</span>` : ''}</td>
-    <td class="department-cell">${escapeHtml(row.department || '—')}</td>
-    <td>${escapeHtml(elapsedDays(row.notificationDate))}</td>
-    <td><span class="status-pill status-${escapeHtml(row.status)}">${escapeHtml(STATUS[row.status] || 'Sin estado')}</span></td>
-    <td><span class="photo-count">${(row.photos || []).length ? `▧ ${(row.photos || []).length} foto${row.photos.length > 1 ? 's' : ''}` : '—'}</span></td>
-    <td><button class="row-actions" data-edit="${escapeHtml(row.id)}" type="button" aria-label="Editar observación">↗</button></td>
-  </tr>`).join('');
-  $('emptyState').hidden = filtered.length > 0;
+  if (state.tab === 'Historial' && !selectedInspection) {
+    const groups = groupInspections(filtered);
+    $('resultCount').textContent = `${groups.length} ${groups.length === 1 ? 'inspección' : 'inspecciones'}`;
+    $('recordsHead').innerHTML = '<tr><th>N.º DE INSPECCIÓN</th><th>FECHA</th><th>ÁREAS INSPECCIONADAS</th><th>HALLAZGOS</th><th>ESTADOS</th><th>ABRIR</th></tr>';
+    $('recordsBody').innerHTML = groups.map(group => {
+      const statusSummary = Object.entries(group.statuses).filter(([, count]) => count).map(([status, count]) => `<span class="status-pill status-${escapeHtml(status)}">${escapeHtml(STATUS[status])}: ${count}</span>`).join(' ');
+      const areas = [...group.areas].map(areaTitle).join(' · ');
+      return `<tr class="inspection-group-row"><td><strong class="inspection-number">${escapeHtml(inspectionNumber(group.date))}</strong></td><td><strong>${escapeHtml(group.date ? dateLabel(group.date) : 'Sin fecha registrada')}</strong></td><td>${escapeHtml(areas || '—')}</td><td><strong>${group.rows.length}</strong></td><td><div class="inspection-statuses">${statusSummary}</div></td><td><button class="button secondary open-inspection" data-open-inspection="${escapeHtml(group.date)}" type="button">Abrir detalle <span aria-hidden="true">→</span></button></td></tr>`;
+    }).join('');
+  } else {
+    const detailRows = selectedInspection ? inspectionRows : filtered;
+    $('resultCount').textContent = `${detailRows.length} ${detailRows.length === 1 ? 'observación' : 'observaciones'}`;
+    $('recordsHead').innerHTML = '<tr><th>FECHA / ÁREA</th><th>HALLAZGO</th><th>RESPONSABLE</th><th>DÍAS ABIERTOS</th><th>ESTADO</th><th>EVIDENCIA</th><th></th></tr>';
+    $('recordsBody').innerHTML = detailRows.map(row => `<tr>
+      <td><div class="date-area"><strong>${escapeHtml(dateLabel(row.inspectedAt))}</strong><span>${escapeHtml(row.area)} · ${escapeHtml(row.location)}</span></div></td>
+      <td><span class="finding-title">${escapeHtml(row.description)}</span>${row.notes ? `<span class="finding-note">${escapeHtml(row.notes)}</span>` : ''}</td>
+      <td class="department-cell">${escapeHtml(row.department || '—')}</td>
+      <td>${escapeHtml(elapsedDays(row.notificationDate))}</td>
+      <td><span class="status-pill status-${escapeHtml(row.status)}">${escapeHtml(STATUS[row.status] || 'Sin estado')}</span></td>
+      <td><span class="photo-count">${(row.photos || []).length ? `▧ ${(row.photos || []).length} foto${row.photos.length > 1 ? 's' : ''}` : '—'}</span></td>
+      <td><button class="row-actions" data-edit="${escapeHtml(row.id)}" type="button" aria-label="Editar observación">↗</button></td>
+    </tr>`).join('');
+  }
+  const visibleCount = $('recordsBody').children.length;
+  $('emptyState').hidden = visibleCount > 0;
   $('filterCount').hidden = activeFilterCount() === 0;
   $('filterCount').textContent = activeFilterCount();
   renderDashboard();
@@ -370,28 +404,37 @@ async function saveInspection(event) {
 }
 
 async function exportPdf() {
-  const rows = recordsForView();
+  const rows = state.tab === 'Inicio'
+    ? [...state.records].sort((a, b) => (b.inspectedAt || '').localeCompare(a.inspectedAt || ''))
+    : state.tab === 'Historial' && state.selectedInspectionDate !== null
+      ? recordsForView().filter(row => (row.inspectedAt || '') === state.selectedInspectionDate)
+      : recordsForView();
   if (!rows.length) { showToast('No hay observaciones para exportar.'); return; }
   const button = $('exportButton'); button.disabled = true;
   try {
     await loadPdfLibraries();
     const Pdf = globalThis.jspdf?.jsPDF;
     if (!Pdf || !Pdf.API.autoTable) throw new Error('No se pudo cargar el módulo PDF.');
-    const pdf = new Pdf({ orientation: 'landscape', unit: 'mm', format: 'a4' });
-    const title = state.tab === 'Historial' ? 'Historial de inspecciones' : state.tab === 'General' ? 'Todas las áreas' : areaTitle(state.tab);
+    const pdf = new Pdf({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+    const title = state.tab === 'Inicio' ? 'Inspección completa' : state.tab === 'Historial' && state.selectedInspectionDate !== null ? inspectionNumber(state.selectedInspectionDate) : state.tab === 'Historial' ? 'Historial de inspecciones' : state.tab === 'General' ? 'Todas las áreas' : areaTitle(state.tab);
     const generated = new Date().toLocaleString('es-EC', { dateStyle: 'medium', timeStyle: 'short' });
+    const inspectionDates = rows.map(row => row.inspectedAt).filter(Boolean).sort();
+    const dateRange = inspectionDates.length > 1 && inspectionDates[0] !== inspectionDates.at(-1)
+      ? `${dateLabel(inspectionDates[0])} – ${dateLabel(inspectionDates.at(-1))}`
+      : inspectionDates.length ? dateLabel(inspectionDates[0]) : 'Sin fecha registrada';
     const palette = {
-      olive: [61, 71, 39], oliveMid: [106, 116, 68], oliveSoft: [229, 233, 218],
-      brown: [126, 91, 62], sand: [239, 231, 216], paper: [250, 248, 243],
-      ink: [55, 51, 43], muted: [117, 108, 94], line: [222, 216, 204], white: [255, 255, 255]
+      navy: [14, 37, 67], darkBlue: [25, 62, 103], blue: [43, 111, 170],
+      sky: [112, 177, 220], pastel: [223, 240, 250], pale: [241, 248, 252],
+      ink: [31, 52, 75], muted: [91, 113, 136], line: [207, 224, 237], white: [255, 255, 255]
     };
     const statusColors = {
-      cumple: { fill: [224, 235, 216], text: [58, 91, 48], accent: [91, 124, 62] },
-      no_cumple: { fill: [240, 225, 216], text: [128, 72, 51], accent: [154, 91, 63] },
-      parcial: { fill: [243, 233, 208], text: [126, 94, 46], accent: [172, 132, 59] },
-      nueva: { fill: [235, 235, 225], text: [85, 89, 65], accent: [121, 124, 91] }
+      cumple: { fill: [222, 243, 239], text: [28, 104, 102], accent: [44, 148, 145] },
+      no_cumple: { fill: [250, 229, 233], text: [145, 57, 75], accent: [181, 78, 96] },
+      parcial: { fill: [255, 243, 218], text: [143, 103, 28], accent: [190, 144, 49] },
+      nueva: { fill: [225, 239, 250], text: [41, 86, 137], accent: [75, 133, 190] }
     };
     const counts = Object.fromEntries(Object.keys(STATUS).map(key => [key, rows.filter(row => row.status === key).length]));
+    const areaCounts = Object.fromEntries(AREAS.map(area => [area, rows.filter(row => row.area === area).length]));
     let logoData = null;
     try {
       const response = await fetch('logoexpalsa.png');
@@ -399,48 +442,69 @@ async function exportPdf() {
     } catch { /* continue with the text brand if the logo is unavailable */ }
 
     const drawHeader = () => {
-      pdf.setFillColor(...palette.olive); pdf.rect(0, 0, 297, 36, 'F');
-      pdf.setFillColor(...palette.oliveMid); pdf.rect(0, 34, 297, 2, 'F');
-      pdf.setFillColor(...palette.white); pdf.roundedRect(13, 7, 43, 21, 2, 2, 'F');
+      pdf.setFillColor(...palette.navy); pdf.rect(0, 0, 210, 36, 'F');
+      pdf.setFillColor(...palette.sky); pdf.rect(0, 34, 210, 2, 'F');
+      pdf.setFillColor(...palette.white); pdf.roundedRect(10, 7, 54, 21, 2, 2, 'F');
       if (logoData) {
-        try { pdf.addImage(logoData, 'PNG', 15, 12, 39, 10, undefined, 'FAST'); } catch { /* keep the report usable without the logo */ }
+        try {
+          const logo = pdf.getImageProperties(logoData), scale = Math.min(50 / logo.width, 15 / logo.height);
+          const width = logo.width * scale, height = logo.height * scale;
+          pdf.addImage(logoData, 'PNG', 37 - width / 2, 17.5 - height / 2, width, height, undefined, 'FAST');
+        } catch { /* keep the report usable without the logo */ }
       }
-      pdf.setTextColor(...palette.white); pdf.setFont('helvetica', 'bold'); pdf.setFontSize(8);
-      pdf.text('EXPALSA  /  SISTEMA DE GESTIÓN DE CALIDAD', 64, 11);
-      pdf.setFontSize(16); pdf.text('REPORTE DE INSPECCIÓN', 64, 21);
-      pdf.setFont('helvetica', 'normal'); pdf.setFontSize(9); pdf.setTextColor(232, 229, 214);
-      pdf.text(title.toLocaleUpperCase('es-EC'), 64, 29);
-      pdf.setFont('helvetica', 'bold'); pdf.setFontSize(7); pdf.setTextColor(230, 225, 209);
-      pdf.text('INSPECCIÓN INTERNA', 283, 12, { align: 'right' });
-      pdf.setFont('helvetica', 'normal'); pdf.setFontSize(8); pdf.setTextColor(...palette.white);
-      pdf.text(dateLabel(rows[0]?.inspectedAt) === '—' ? 'Fecha no registrada' : `Inspección: ${dateLabel(rows[0]?.inspectedAt)}`, 283, 20, { align: 'right' });
-      pdf.setTextColor(230, 225, 209); pdf.setFontSize(7);
-      pdf.text(`Generado ${generated}`, 283, 28, { align: 'right' });
+      pdf.setTextColor(...palette.pastel); pdf.setFont('helvetica', 'bold'); pdf.setFontSize(7);
+      pdf.text('SISTEMA DE GESTIÓN DE CALIDAD', 71, 11);
+      pdf.setTextColor(...palette.white); pdf.setFontSize(14);
+      pdf.text('REPORTE DE INSPECCIÓN', 71, 20);
+      pdf.setFont('helvetica', 'normal'); pdf.setFontSize(8); pdf.setTextColor(...palette.pastel);
+      pdf.text(title.toLocaleUpperCase('es-EC'), 71, 28);
+      pdf.setFont('helvetica', 'bold'); pdf.setFontSize(6.5); pdf.setTextColor(...palette.sky);
+      pdf.text('REPORTE', 199, 11, { align: 'right' });
+      pdf.setFont('helvetica', 'normal'); pdf.setFontSize(7); pdf.setTextColor(...palette.white);
+      pdf.text(dateRange, 199, 19, { align: 'right' });
+      pdf.setTextColor(...palette.pastel); pdf.setFontSize(6.3);
+      pdf.text(`Emitido ${generated}`, 199, 27, { align: 'right' });
     };
     drawHeader();
 
     const metrics = [
-      { label: 'HALLAZGOS', value: rows.length, color: palette.brown },
+      { label: 'HALLAZGOS', value: rows.length, color: palette.darkBlue },
       { label: 'CUMPLE', value: counts.cumple, color: statusColors.cumple.accent },
       { label: 'NO CUMPLE', value: counts.no_cumple, color: statusColors.no_cumple.accent },
       { label: 'PARCIAL', value: counts.parcial, color: statusColors.parcial.accent },
       { label: 'NUEVAS', value: counts.nueva, color: statusColors.nueva.accent }
     ];
-    const metricGap = 3, metricX = 14, metricY = 41, metricH = 18;
-    const metricW = (269 - metricGap * (metrics.length - 1)) / metrics.length;
+    const metricGap = 2.5, metricX = 9, metricY = 42, metricH = 19;
+    const metricW = (192 - metricGap * (metrics.length - 1)) / metrics.length;
     metrics.forEach((metric, index) => {
       const x = metricX + index * (metricW + metricGap);
-      pdf.setFillColor(...palette.paper); pdf.setDrawColor(...palette.line); pdf.setLineWidth(.2);
+      pdf.setFillColor(...palette.pale); pdf.setDrawColor(...palette.line); pdf.setLineWidth(.2);
       pdf.roundedRect(x, metricY, metricW, metricH, 1.8, 1.8, 'FD');
       pdf.setFillColor(...metric.color); pdf.roundedRect(x, metricY, 1.6, metricH, .8, .8, 'F');
       pdf.setFont('helvetica', 'bold'); pdf.setFontSize(6.5); pdf.setTextColor(...palette.muted);
       pdf.text(metric.label, x + 4, metricY + 6.5);
-      pdf.setFontSize(13); pdf.setTextColor(...palette.ink);
-      pdf.text(String(metric.value), x + metricW - 3, metricY + 14, { align: 'right' });
+      pdf.setFontSize(12); pdf.setTextColor(...palette.navy);
+      pdf.text(String(metric.value), x + metricW - 3, metricY + 15, { align: 'right' });
     });
-    pdf.setFont('helvetica', 'bold'); pdf.setFontSize(8); pdf.setTextColor(...palette.olive);
-    pdf.text('DETALLE DE HALLAZGOS', 14, 66);
-    pdf.setDrawColor(...palette.line); pdf.setLineWidth(.35); pdf.line(14, 68, 283, 68);
+    const isHome = state.tab === 'Inicio';
+    if (isHome) {
+      pdf.setFont('helvetica', 'bold'); pdf.setFontSize(7); pdf.setTextColor(...palette.darkBlue);
+      pdf.text('DISTRIBUCIÓN POR ÁREA', 9, 68);
+      AREAS.forEach((area, index) => {
+        const col = index % 3, row = Math.floor(index / 3), x = 9 + col * 65, y = 71 + row * 13;
+        pdf.setFillColor(...palette.pale); pdf.setDrawColor(...palette.line); pdf.roundedRect(x, y, 62, 11, 1.5, 1.5, 'FD');
+        pdf.setFillColor(...palette.blue); pdf.circle(x + 4, y + 5.5, 1.1, 'F');
+        pdf.setFont('helvetica', 'normal'); pdf.setFontSize(6.5); pdf.setTextColor(...palette.ink);
+        pdf.text(areaTitle(area), x + 7, y + 6.7);
+        pdf.setFont('helvetica', 'bold'); pdf.setTextColor(...palette.darkBlue);
+        pdf.text(String(areaCounts[area]), x + 58, y + 6.7, { align: 'right' });
+      });
+    }
+    const tableTitleY = isHome ? 103 : 68;
+    const tableStartY = isHome ? 107 : 72;
+    pdf.setFont('helvetica', 'bold'); pdf.setFontSize(7.5); pdf.setTextColor(...palette.darkBlue);
+    pdf.text('DETALLE DE HALLAZGOS', 9, tableTitleY);
+    pdf.setDrawColor(...palette.line); pdf.setLineWidth(.35); pdf.line(9, tableTitleY + 2, 201, tableTitleY + 2);
 
     const imageData = new Map(), photosByKey = new Map();
     for (const row of rows) for (const photo of (row.photos || []).slice(0, 6)) photosByKey.set(photo.path || photo.previewUrl || photo.name, photo);
@@ -457,17 +521,17 @@ async function exportPdf() {
       } catch { imageData.set(key, null); }
     }));
     pdf.autoTable({
-      startY: 72, showHead: 'everyPage', head: [['FECHA', 'ÁREA / UBICACIÓN', 'HALLAZGO / ACCIÓN / SEGUIMIENTO', 'RESPONSABLE', 'DÍAS', 'ESTADO', 'EVIDENCIA FOTOGRÁFICA']],
+      startY: tableStartY, showHead: 'everyPage', head: [['FECHA', 'ÁREA / UBICACIÓN', 'HALLAZGO / ACCIÓN / SEGUIMIENTO', 'RESPONSABLE', 'DÍAS', 'ESTADO', 'FOTOS']],
       body: rows.map(row => [dateLabel(row.inspectedAt), `${row.area}\n${row.location}`, `${row.description}${row.notes ? `\nSeguimiento: ${row.notes}` : ''}`, row.department || '—', elapsedDays(row.notificationDate), STATUS[row.status] || '—', (row.photos || []).length ? '' : 'Sin evidencia']),
-      theme: 'grid', styles: { font: 'helvetica', fontSize: 7.4, cellPadding: 2.4, textColor: palette.ink, lineColor: palette.line, lineWidth: .2, minCellHeight: 16, valign: 'middle', overflow: 'linebreak' },
-      headStyles: { fillColor: palette.olive, textColor: palette.white, fontSize: 7, fontStyle: 'bold', halign: 'left', cellPadding: 3 },
-      alternateRowStyles: { fillColor: [248, 246, 239] },
+      theme: 'grid', styles: { font: 'helvetica', fontSize: 6.5, cellPadding: 1.8, textColor: palette.ink, lineColor: palette.line, lineWidth: .18, minCellHeight: 16, valign: 'middle', overflow: 'linebreak' },
+      headStyles: { fillColor: palette.darkBlue, textColor: palette.white, fontSize: 6.1, fontStyle: 'bold', halign: 'left', cellPadding: 2.3 },
+      alternateRowStyles: { fillColor: palette.pale },
       columnStyles: {
-        0: { cellWidth: 22, fontSize: 7 }, 1: { cellWidth: 43, fontStyle: 'bold' }, 2: { cellWidth: 77 },
-        3: { cellWidth: 32, fontSize: 7 }, 4: { cellWidth: 18, halign: 'center' },
-        5: { cellWidth: 26, halign: 'center', fontStyle: 'bold' }, 6: { cellWidth: 50, halign: 'center', fontSize: 6.5, textColor: palette.muted }
+        0: { cellWidth: 17, fontSize: 6.1 }, 1: { cellWidth: 31, fontStyle: 'bold', fontSize: 6.1 }, 2: { cellWidth: 48 },
+        3: { cellWidth: 25, fontSize: 6 }, 4: { cellWidth: 12, halign: 'center', fontSize: 6 },
+        5: { cellWidth: 23, halign: 'center', fontStyle: 'bold', fontSize: 6 }, 6: { cellWidth: 36, halign: 'center', fontSize: 6, textColor: palette.muted }
       },
-      margin: { top: 40, left: 14, right: 14, bottom: 18 },
+      margin: { top: 38, left: 9, right: 9, bottom: 19 },
       willDrawPage: () => drawHeader(),
       didParseCell: data => {
         if (data.section !== 'body') return;
@@ -479,8 +543,8 @@ async function exportPdf() {
         }
         if (data.column.index === 6) {
           const photos = (row?.photos || []).slice(0, 6).filter(photo => imageData.get(photo.path || photo.previewUrl || photo.name));
-          const lines = Math.ceil(photos.length / 3);
-          data.cell.styles.minCellHeight = Math.max(16, lines ? 4.5 + lines * 10 + (lines - 1) * 1.5 : 16);
+          const lines = Math.ceil(photos.length / 2);
+          data.cell.styles.minCellHeight = Math.max(16, lines ? 4 + lines * 9 + (lines - 1) * 1.2 : 16);
           if (!photos.length) { data.cell.styles.fontStyle = 'italic'; data.cell.styles.textColor = palette.muted; }
         }
       },
@@ -489,12 +553,12 @@ async function exportPdf() {
         const photos = (rows[data.row.index]?.photos || []).slice(0, 6).filter(photo => imageData.get(photo.path || photo.previewUrl || photo.name));
         photos.forEach((photo, index) => {
           const key = photo.path || photo.previewUrl || photo.name, source = imageData.get(key);
-          const col = index % 3, line = Math.floor(index / 3), boxW = 13, boxH = 10, gapX = 1.5, gapY = 1.5;
-          const rowW = 3 * boxW + 2 * gapX, startX = data.cell.x + Math.max(2, (data.cell.width - rowW) / 2);
-          const x = startX + col * (boxW + gapX), y = data.cell.y + 2.2 + line * (boxH + gapY);
+          const col = index % 2, line = Math.floor(index / 2), boxW = 15.5, boxH = 8, gapX = 1, gapY = 1.2;
+          const rowW = 2 * boxW + gapX, startX = data.cell.x + Math.max(1, (data.cell.width - rowW) / 2);
+          const x = startX + col * (boxW + gapX), y = data.cell.y + 1.7 + line * (boxH + gapY);
           try {
-            pdf.setDrawColor(...palette.line); pdf.setFillColor(...palette.white); pdf.roundedRect(x, y, boxW, boxH, 1, 1, 'FD');
-            const properties = pdf.getImageProperties(source), scale = Math.min((boxW - 1) / properties.width, (boxH - 1) / properties.height);
+            pdf.setDrawColor(...palette.line); pdf.setFillColor(...palette.white); pdf.roundedRect(x, y, boxW, boxH, .8, .8, 'FD');
+            const properties = pdf.getImageProperties(source), scale = Math.min((boxW - .8) / properties.width, (boxH - .8) / properties.height);
             const w = properties.width * scale, h = properties.height * scale, imageX = x + (boxW - w) / 2, imageY = y + (boxH - h) / 2;
             const format = source.startsWith('data:image/png') ? 'PNG' : 'JPEG';
             pdf.addImage(source, format, imageX, imageY, w, h, undefined, 'FAST');
@@ -505,11 +569,11 @@ async function exportPdf() {
     });
     const pages = pdf.internal.getNumberOfPages();
     for (let page = 1; page <= pages; page++) {
-      pdf.setPage(page); pdf.setDrawColor(...palette.line); pdf.setLineWidth(.3); pdf.line(14, 199, 283, 199);
+      pdf.setPage(page); pdf.setDrawColor(...palette.line); pdf.setLineWidth(.3); pdf.line(9, 283, 201, 283);
       pdf.setFont('helvetica', 'normal'); pdf.setFontSize(7); pdf.setTextColor(...palette.muted);
-      pdf.text('EXPALSA  ·  Sistema de gestión de calidad', 14, 204);
-      pdf.setFont('helvetica', 'bold'); pdf.setTextColor(...palette.olive);
-      pdf.text(`PÁGINA ${page} DE ${pages}`, 283, 204, { align: 'right' });
+      pdf.text('EXPALSA  ·  Sistema de gestión de calidad', 9, 289);
+      pdf.setFont('helvetica', 'bold'); pdf.setTextColor(...palette.darkBlue);
+      pdf.text(`PÁGINA ${page} DE ${pages}`, 201, 289, { align: 'right' });
     }
     pdf.setProperties({ title: `Reporte de inspección · ${title}`, subject: 'Inspección de instalaciones EXPALSA', author: 'EXPALSA · Sistema de gestión de calidad' });
     const slug = state.tab.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
@@ -544,10 +608,13 @@ async function initialize() {
 
 document.addEventListener('click', event => {
   const nav = event.target.closest('[data-tab]');
-  if (nav) { state.tab = nav.dataset.tab; $('sidebar').classList.remove('open'); render(); return; }
+  if (nav) { state.tab = nav.dataset.tab; if (state.tab === 'Historial') state.selectedInspectionDate = null; $('sidebar').classList.remove('open'); render(); return; }
+  const openInspection = event.target.closest('[data-open-inspection]');
+  if (openInspection) { state.tab = 'Historial'; state.selectedInspectionDate = openInspection.dataset.openInspection; render(); return; }
+  if (event.target.closest('#backToHistory')) { state.selectedInspectionDate = null; render(); return; }
   const edit = event.target.closest('[data-edit]'); if (edit) { openEditDialog(edit.dataset.edit); return; }
   if (event.target.closest('[data-create]')) { openNewDialog(); return; }
-  const tabLink = event.target.closest('[data-open-tab]'); if (tabLink) { state.tab = tabLink.dataset.openTab; render(); return; }
+  const tabLink = event.target.closest('[data-open-tab]'); if (tabLink) { state.tab = tabLink.dataset.openTab; if (state.tab === 'Historial') state.selectedInspectionDate = null; render(); return; }
   const removePhoto = event.target.closest('[data-remove-photo]'); if (removePhoto) { state.pendingPhotos.splice(Number(removePhoto.dataset.removePhoto), 1); drawPhotoPreview(); }
 });
 $('loginForm').addEventListener('submit', async event => {
