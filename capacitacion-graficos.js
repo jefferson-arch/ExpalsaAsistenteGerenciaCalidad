@@ -3,7 +3,7 @@ export const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;'
 export const finite=n=>Number.isFinite(n)&&n>=0&&n<=100;
 export const mean=v=>{const a=v.filter(finite);return a.length?a.reduce((s,n)=>s+n,0)/a.length:null;};
 export const percent=n=>finite(n)?n.toFixed(1)+'%':'Sin dato';
-export function sessionScore(s){if(s?.status!=='done')return null;const v=Object.values(s.ratings||{}).filter(n=>Number.isInteger(n)&&n>=0&&n<=4);return v.length?v.reduce((s,n)=>s+n,0)/v.length/4*100:null;}
+export function sessionScore(s){if(s?.status!=='done')return null;if(Number.isFinite(s.score)&&s.score>=0&&s.score<=100)return s.score;const v=Object.values(s.ratings||{}).filter(n=>Number.isInteger(n)&&n>=0&&n<=4);return v.length?v.reduce((s,n)=>s+n,0)/v.length/4*100:null;}
 export function trainingBand(practice,theory,needs=false){if((finite(practice)&&practice<50)||(finite(theory)&&theory<50))return {key:'priority',label:'Brecha amplia · revisión prioritaria'};if(!finite(practice)||!finite(theory))return {key:'missing',label:'Evidencia incompleta'};if(practice<85||theory<85||needs)return {key:'reinforce',label:'Requiere refuerzo'};return {key:'target',label:'Meta formativa alcanzada'};}
 export function progressModel(data){
   const people=(data.people||[]).filter(p=>p.active===true&&p.deleted!==true),ids=new Set(people.map(p=>p.id));
