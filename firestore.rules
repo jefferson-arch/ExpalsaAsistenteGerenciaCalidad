@@ -1143,6 +1143,23 @@ match /empaque_ejercicio_reportes/{reporteId} {
     // Seguimiento del plan firmado 6.1 y 6.2. Solo administrador.
     // Modelo: id y type inmutables; payload tipado por formulario; revision incremental.
     // No elimina ni modifica las reglas de los modulos existentes.
+    function capGraphViewer() {
+      return signedIn() && request.auth.token.email == 'karina@expalsaevaluations.com';
+    }
+    match /expalsa_capacitacion_2026_graficos/{docId} {
+      allow get: if docId == 'actual' && (expalsaAdmin() || capGraphViewer());
+      allow list: if false;
+      allow create, update: if docId == 'actual' && expalsaAdmin()
+        && request.resource.data.keys().hasOnly(['version','people','sessions','theory','updatedAt'])
+        && request.resource.data.keys().hasAll(['version','people','sessions','theory','updatedAt'])
+        && request.resource.data.version == 1
+        && request.resource.data.people is list && request.resource.data.people.size() <= 10
+        && request.resource.data.sessions is list && request.resource.data.sessions.size() <= 100
+        && request.resource.data.theory is map
+        && request.resource.data.updatedAt == request.time;
+      allow delete: if false;
+    }
+
     match /expalsa_capacitacion_2026_documentos/{docId} {
       allow get: if expalsaAdmin();
       allow list, write: if false;
