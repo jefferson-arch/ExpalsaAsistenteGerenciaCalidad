@@ -1,4 +1,4 @@
-Warning: truncated output (original token count: 36529)
+Warning: truncated output (original token count: 36560)
 Total output lines: 1699
 
 // ===============================================================
@@ -519,133 +519,7 @@ service cloud.firestore {
       allow get: if expalsaAdmin() || (accountEmail() && request.auth.uid==uid);
       allow list: if expalsaAdmin();
       allow create: if accountEmail() && request.auth.uid==uid &&
-        (!exists(accessDoc(uid)) || get(accessDoc(uid)).data.get('deleted',false)!=true) && request.resource.data.keys().hasOnly(['email','status','createdAt']) &&
-        request.resource.data.keys().hasAll(['email','status','createdAt']) && request.resource.data.email==request.auth.token.email &&
-        request.resource.data.status=='pending' && request.resource.data.createdAt==request.time;
-      allow update,delete: if expalsaAdmin();
-    }
-    match /expalsa_calidad_perfiles/{id} {
-      allow get, list: if expalsaAdmin();
-      allow create: if expalsaAdmin() && request.resource.data.payload is map && request.resource.data.payload.id==id && request.resource.data.updatedBy==request.auth.token.email;
-      allow update: if expalsaAdmin() && request.resource.data.payload is map && request.resource.data.payload.id==id && request.resource.data.updatedBy==request.auth.token.email &&
-        request.resource.data.payload.get('accountUid','')==resource.data.payload.get('accountUid','') &&
-        (request.resource.data.payload.get('training',[])==resource.data.payload.get('training',[]) || trainingStageValid(request.resource.data.payload,resource.data.payload));
-      allow delete: if false;
-    }
-    match /expalsa_calidad_registros/{id} {
-      allow get, list: if expalsaAdmin();
-      allow create: if expalsaAdmin() && rawRecordValid(id,request.resource.data);
-      allow update: if expalsaAdmin() && rawRecordValid(id,request.resource.data) && request.resource.data.kind==resource.data.kind &&
-        request.resource.data.payload.profileId==resource.data.payload.profileId && evaluationStage(request.resource.data.payload)==evaluationStage(resource.data.payload);
-      allow delete: if false;
-    }
-
-    function rawRecordValid(id,d) {
-      return d.payload is map && d.payload.id==id && d.kind in ['observaciones','arranque','monitoreo','bpm','palas','escalamiento','gestion','capacitacion'] &&
-        d.updatedBy==request.auth.token.email && (d.kind=='gestion' || rawRecordStage(d));
-    }
-    function identityDoc(uid) { return /databases/$(database)/documents/expalsa_calidad_identidades/$(uid); }
-    function activeTarget(uid) {
-      let access=get(accessDoc(uid)).data;
-      return access.active==true && access.get('deleted',false)!=true;
-    }
-    function identityDataValid(uid,d) {
-      return d.keys().hasOnly(['uid','email','firstNames','lastNames','employeeId','createdAt','updatedAt']) &&
-        d.keys().hasAll(['uid','email','firstNames','lastNames','employeeId','createdAt','updatedAt']) &&
-        d.uid==uid && d.email==get(accessDoc(uid)).data.email &&
-        d.firstNames is string && d.firstNames.size()>=2 && d.firstNames.size()<=100 &&
-        d.lastNames is string && d.lastNames.size()>=2 && d.lastNames.size()<=100 &&
-        d.employeeId is string && d.employeeId.matches('^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$') &&
-        d.createdAt is timestamp && d.updatedAt==request.time;
-    }
-    function identityPresent(uid) { return get(identityDoc(uid)).data.uid==uid; }
-    match /expalsa_calidad_identidades/{uid} {
-      allow get: if expalsaAdmin() || (inspector() && request.auth.uid==uid);
-      allow list: if expalsaAdmin();
-      allow create: if (expalsaAdmin() || (inspector() && request.auth.uid==uid)) && activeTarget(uid) &&
-        identityDataValid(uid,request.resource.data) && request.resource.data.createdAt==request.time;
-      allow update: if expalsaAdmin() && identityDataValid(uid,request.resource.data) &&
-        request.resource.data.createdAt==resource.data.createdAt && request.resource.data.uid==resource.data.uid && request.resource.data.email==resource.data.email;
-      allow delete: if false;
-    }
-    function radarScore(n) { return n==null || (n>=0 && n<=100); }
-    function radarMean(t,p,m) {
-      return ((t==null || p==null) && m==null) ||
-        (t is number && p is number && m is number && m>=(t+p)*0.5-0.0000001 && m<=(t+p)*0.5+0.0000001);
-    }
-
-    function radarTraining(uid,d) {
-      return d.keys().hasOnly(['schema','uid','asOf','practice','theory','avera…14529 tokens truncated…n autoriza() {
-    let id = request.resource.data.ultima.alertaId;
-    let hash = request.resource.data.ultima.tokenHash;
-    let token = get(/databases/$(database)/documents/empaque_ejercicio_qr/$(hash)).data;
-    let jefe = get(/databases/$(database)/documents/empaque_ejercicio_jefes/$(token.uid)).data;
-    let aprobacion = request.resource.data.alertas[id].autorizacion;
-    return request.resource.data.ultima.tipo == 'autorizar'
-      && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['alertas','pendientes','revision','actualizado','ultima'])
-      && id in resource.data.pendientes
-      && token.activo == true && token.vence > request.time && jefe.activo == true
-      && request.resource.data.pendientes == resource.data.pendientes.removeAll([id])
-      && request.resource.data.alertas.diff(resource.data.alertas).affectedKeys().hasOnly([id])
-      && request.resource.data.alertas[id].diff(resource.data.alertas[id]).affectedKeys().hasOnly(['autorizacion'])
-      && aprobacion.keys().hasOnly(['nombre','uid','tokenHash','fecha','registradoPor'])
-      && aprobacion.nombre == jefe.nombre
-      && aprobacion.uid == token.uid
-      && aprobacion.tokenHash == hash
-      && aprobacion.registradoPor == request.auth.uid;
-  }
-  function cierra() {
-    return request.resource.data.ultima.tipo == 'cerrar'
-      && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['estado','cerrado','revision','actualizado','ultima'])
-      && request.resource.data.estado == 'cerrado'
-      && request.resource.data.cerrado == request.time
-      && resource.data.pendientes.size() == 0
-      && resource.data.muestras.size() > 0;
-  }
-  function elimina() {
-    return request.resource.data.ultima.tipo == 'eliminar'
-      && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['eliminado','revision','actualizado','ultima'])
-      && request.resource.data.eliminado == true;
-  }
-  allow read: if emLeeReporte(resource.data);
-  allow create: if emUsuario()
-    && request.resource.data.owner == request.auth.uid
-    && request.resource.data.estado == 'abierto'
-    && request.resource.data.muestras == []
-    && request.resource.data.alertas == {}
-    && request.resource.data.pendientes == []
-    && request.resource.data.revision == 0
-    && request.resource.data.eliminado == false
-    && request.resource.data.creado == request.time;
-  allow update: if baseActualizacion() && (
-    (request.resource.data.ultima.tipo == 'editar' && edicion())
-    || (request.resource.data.ultima.tipo == 'autorizar' && autoriza())
-    || (request.resource.data.ultima.tipo == 'cerrar' && cierra())
-    || (request.resource.data.ultima.tipo == 'eliminar' && elimina())
-  );
-  allow delete: if false;
-  match /fotos/{fotoId} {
-    allow read: if emLeeReporte(get(/databases/$(database)/documents/empaque_ejercicio_reportes/$(reporteId)).data);
-    allow create: if emEditaReporte(get(/databases/$(database)/documents/empaque_ejercicio_reportes/$(reporteId)).data)
-      && get(/databases/$(database)/documents/empaque_ejercicio_reportes/$(reporteId)).data.estado == 'abierto'
-      && request.resource.data.owner == request.auth.uid
-      && request.resource.data.creado == request.time
-      && request.resource.data.imagen is string
-      && request.resource.data.imagen.size() <= 300000
-      && request.resource.data.imagen.matches('data:image/jpeg;base64,.*');
-    allow update, delete: if false;
-  }
-}
-
-
-
-    // MODULO DE CAPACITACION 2026 - EXCLUSIVAMENTE ADMINISTRADOR
-    // Colecciones independientes: no modifica evaluaciones, resultados ni expedientes oficiales.
-    function capBoardScore(v) { return v == null || (v is number && v >= 0 && v <= 100); }
-    function capBoardScoresValid(s) { return s is list && s.size() == 10
-      && capBoardScore(s[0]) && capBoardScore(s[1]) && capBoardScore(s[2]) && capBoardScore(s[3]) && capBoardScore(s[4])
-      && capBoardScore(s[5]) && capBoardScore(s[6]) && capBoardScore(s[7]) && capBoardScore(s[8]) && capBoardScore(s[9]); }
-    function capBoardRowValid(r) { return r is map && r.keys().hasOnly(['name','scores']) && r.keys().hasAll(['name','scores'])
+        (!exists(accessDoc(uid)) || get(accessDoc(uid)).data.get('deleted',false)!=true) && request.resource.data.keys().h…16560 tokens truncated…rn r is map && r.keys().hasOnly(['name','scores']) && r.keys().hasAll(['name','scores'])
       && r.name is string && r.name.size() >= 1 && r.name.size() <= 100 && capBoardScoresValid(r.scores); }
     function capBoardRowsValid(rows) { return rows is list && rows.size() <= 10
       && (rows.size() < 1 || capBoardRowValid(rows[0])) && (rows.size() < 2 || capBoardRowValid(rows[1]))
@@ -1130,8 +1004,8 @@ service cloud.firestore {
         && request.resource.data.revision == 1
         && request.resource.data.createdAt == request.time;
       allow update: if distributionUser() && distributionDataValid(id,request.resource.data)
-        && (expalsaAdmin() || resource.data.createdBy == request.auth.uid)
-        && request.resource.data.createdBy == resource.data.createdBy
+        && (expalsaAdmin() || resource.data.createdBy == request.auth.uid || id == resource.data.date+'__'+request.auth.uid)
+        && (expalsaAdmin() ? request.resource.data.createdBy == resource.data.createdBy : request.resource.data.createdBy == request.auth.uid)
         && (id == request.resource.data.date || id == request.resource.data.date+'__'+request.resource.data.createdBy)
         && request.resource.data.createdAt == resource.data.createdAt
         && request.resource.data.createdBy == resource.data.createdBy
