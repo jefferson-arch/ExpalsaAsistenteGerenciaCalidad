@@ -1597,6 +1597,25 @@ match /empaque_ejercicio_reportes/{reporteId} {
 
     // Distribución diaria del personal de Calidad en Planta.
     // Solo el administrador existente puede leer o editar estos datos.
+    function validDistributionInspector(id,d) {
+      return expalsaAdmin() && id.size() == 20
+        && d.keys().hasAll(['name','active','createdAt','createdBy','updatedAt','updatedBy','revision'])
+        && d.keys().hasOnly(['name','active','createdAt','createdBy','updatedAt','updatedBy','revision'])
+        && d.name is string && d.name.matches('.*\\S.*') && d.name.size() >= 2 && d.name.size() <= 120
+        && d.active is bool && d.createdAt is timestamp && d.createdBy == request.auth.uid
+        && d.updatedAt == request.time && d.updatedBy == request.auth.uid
+        && d.revision is int && d.revision >= 1;
+    }
+    match /expalsa_calidad_distribucion_inspectores/{id} {
+      allow get, list: if expalsaAdmin();
+      allow create: if validDistributionInspector(id,request.resource.data)
+        && request.resource.data.revision == 1 && request.resource.data.createdAt == request.time;
+      allow update: if validDistributionInspector(id,request.resource.data)
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.createdBy == resource.data.createdBy
+        && request.resource.data.revision == resource.data.revision + 1;
+      allow delete: if false;
+    }
     function distributionSlots() {
       return ['shiftDavid','shiftAngelo','noRota','receptionDigitacion','receptionMuestreo','receptionOrganolepticos','receptionValoracion','receptionSulfitos',
         'machine2','machine5','machine6','machine7','machine8','machine9','machine10','avanceDescabezado','avanceValorAgregado',
