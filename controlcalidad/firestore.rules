@@ -1,5 +1,5 @@
-Warning: truncated output (original token count: 36560)
-Total output lines: 1699
+Warning: truncated output (original token count: 36542)
+Total output lines: 1698
 
 // ===============================================================
 // Assumed data model added for mapa-calidad.html
@@ -519,7 +519,8 @@ service cloud.firestore {
       allow get: if expalsaAdmin() || (accountEmail() && request.auth.uid==uid);
       allow list: if expalsaAdmin();
       allow create: if accountEmail() && request.auth.uid==uid &&
-        (!exists(accessDoc(uid)) || get(accessDoc(uid)).data.get('deleted',false)!=true) && request.resource.data.keys().h…16560 tokens truncated…rn r is map && r.keys().hasOnly(['name','scores']) && r.keys().hasAll(['name','scores'])
+        (!exists(accessDoc(uid)) || get(accessDoc(uid)).data.get('deleted',false)!=true) && request.resource.data.keys().h…16542 tokens truncated…[8]) && capBoardScore(s[9]); }
+    function capBoardRowValid(r) { return r is map && r.keys().hasOnly(['name','scores']) && r.keys().hasAll(['name','scores'])
       && r.name is string && r.name.size() >= 1 && r.name.size() <= 100 && capBoardScoresValid(r.scores); }
     function capBoardRowsValid(rows) { return rows is list && rows.size() <= 10
       && (rows.size() < 1 || capBoardRowValid(rows[0])) && (rows.size() < 2 || capBoardRowValid(rows[1]))
@@ -1008,7 +1009,6 @@ service cloud.firestore {
         && (expalsaAdmin() ? request.resource.data.createdBy == resource.data.createdBy : request.resource.data.createdBy == request.auth.uid)
         && (id == request.resource.data.date || id == request.resource.data.date+'__'+request.resource.data.createdBy)
         && request.resource.data.createdAt == resource.data.createdAt
-        && request.resource.data.createdBy == resource.data.createdBy
         && request.resource.data.revision == resource.data.revision + 1;
       allow delete: if false;
     }
