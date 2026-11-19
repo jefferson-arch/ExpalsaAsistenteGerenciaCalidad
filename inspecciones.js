@@ -151,9 +151,16 @@ function setConnection(connected, label = '') {
 
 function drawNavigation() {
   $('sectionNav').className = 'side-nav';
-  const alerts = state.records.filter(row => row.status === 'no_cumple' || row.status === 'parcial').length;
-  const overdue = state.records.filter(row => ['no_cumple', 'parcial', 'nueva'].includes(row.status) && row.complianceDueDate && complianceResult(row).kind === 'vencido').length;
-  $('sectionNav').innerHTML = getSections().map(item => `<button class="nav-button${state.tab === item.id ? ' active' : ''}" data-tab="${escapeHtml(item.id)}" type="button"><span class="nav-icon">${item.icon}</span><span>${escapeHtml(item.title)}</span>${item.id === 'Alertas' && alerts ? `<span class="nav-alert-count">${alerts}</span>` : item.id === 'Cumplimientos' && overdue ? `<span class="nav-alert-count">${overdue}</span>` : item.departmentKey ? `<span class="nav-alert-count department-count">${state.records.filter(row => rowDepartments(row).some(department => department.key === item.departmentKey)).length}</span>` : ''}</button>`).join('');
+  const statusCounts = Object.fromEntries(Object.keys(STATUS).map(key => [key, 0]));
+  const departmentCounts = new Map();
+  let overdue = 0;
+  for (const row of state.records) {
+    if (statusCounts[row.status] !== undefined) statusCounts[row.status]++;
+    if (['no_cumple', 'parcial', 'nueva'].includes(row.status) && row.complianceDueDate && complianceResult(row).kind === 'vencido') overdue++;
+    for (const department of rowDepartments(row)) departmentCounts.set(department.key, (departmentCounts.get(department.key) || 0) + 1);
+  }
+  const alerts = statusCounts.no_cumple + statusCounts.parcial;
+  $('sectionNav').innerHTML = getSections().map(item => `<button class="nav-button${state.tab === item.id ? ' active' : ''}" data-tab="${escapeHtml(item.id)}" type="button"><span class="nav-icon">${item.icon}</span><span>${escapeHtml(item.title)}</span>${item.id === 'Alertas' && alerts ? `<span class="nav-alert-count">${alerts}</span>` : item.id === 'Cumplimientos' && overdue ? `<span class="nav-alert-count">${overdue}</span>` : item.departmentKey ? `<span class="nav-alert-count department-count">${departmentCounts.get(item.departmentKey) || 0}</span>` : ''}</button>`).join('');
 }
 
 function getSections() {
@@ -356,8 +363,9 @@ function render() {
   $('emptyState').hidden = visibleCount > 0;
   $('filterCount').hidden = activeFilterCount() === 0;
   $('filterCount').textContent = activeFilterCount();
-  renderDashboard();
-  renderCompliance();
+  if (state.tab === 'Inicio') renderDashboard();
+  if (state.tab === 'Alertas') renderAlerts();
+  if (state.tab === 'Cumplimientos') renderCompliance();
 }
 
 function activeFilterCount() {
@@ -366,7 +374,13 @@ function activeFilterCount() {
 
 function renderDashboard() {
   const rows = state.records;
-  const counts = Object.fromEntries(Object.keys(STATUS).map(key => [key, rows.filter(row => row.status === key).length]));
+  const counts = Object.fromEntries(Object.keys(STATUS).map(key => [key, 0]));
+  const areaCounts = Object.fromEntries(AREAS.map(area => [area, { total: 0, ...Object.fromEntries(Object.keys(STATUS).map(key => [key, 0])) }]));
+  for (const row of rows) {
+    if (counts[row.status] !== undefined) counts[row.status]++;
+    const area = areaCounts[row.area];
+    if (area) { area.total++; if (area[row.status] !== undefined) area[row.status]++; }
+  }
   $('statTotal').textContent = rows.length;
   $('statCompliant').textContent = counts.cumple;
   $('statFailed').textContent = counts.no_cumple;
@@ -402,18 +416,22 @@ function renderDashboard() {
     button.setAttribute('aria-pressed', String(selected));
   });
    $('categorySummary').innerHTML = AREAS.map(area => {
-     const areaRows = rows.filter(row => row.area === area), count = areaRows.length;
+     const areaCountsForRow = areaCounts[area], count = areaCountsForRow.total;
      const segments = ['cumple','no_cumple','parcial','nueva'].map(status => {
-       const value = areaRows.filter(row => row.status === status).length;
+       const value = areaCountsForRow[status];
        const selected = state.pivotFilter.area === area && state.pivotFilter.status === status && !state.pivotFilter.departmentKey;
        return `<button class="bar-segment segment-${status}${selected ? ' is-active' : ''}" data-pivot-area="${area}" data-pivot-status="${status}" style="width:${rows.length ? value / rows.length * 100 : 0}%" title="Filtrar ${escapeHtml(areaTitle(area))} · ${escapeHtml(STATUS[status])}: ${value}" aria-label="Filtrar ${escapeHtml(areaTitle(area))}, ${escapeHtml(STATUS[status])}: ${value}" aria-pressed="${selected}" type="button"></button>`;
      }).join('');
-     const label = ['cumple','no_cumple','parcial','nueva'].map(status => `${STATUS[status]}: ${areaRows.filter(row => row.status === status).length}`).join(', ');
+     const label = ['cumple','no_cumple','parcial','nueva'].map(status => `${STATUS[status]}: ${areaCountsForRow[status]}`).join(', ');
      return `<div class="category-row"><button class="category-area-filter${state.pivotFilter.area === area && !state.pivotFilter.status ? ' is-active' : ''}" data-pivot-area="${area}" type="button" aria-pressed="${state.pivotFilter.area === area && !state.pivotFilter.status}">${escapeHtml(areaTitle(area))}</button><div class="bar-track segmented-bar" role="group" aria-label="${escapeHtml(areaTitle(area))}: ${escapeHtml(label)}">${segments}</div><b>${count}</b></div>`;
    }).join('');
   renderPivotTable();
   const recent = [...rows].sort((a, b) => b.inspectedAt.localeCompare(a.inspectedAt)).slice(0, 5);
   $('recentRows').innerHTML = recent.length ? `<div class="recent-list"><div class="recent-header" aria-hidden="true"><span>Fecha</span><span>Hallazgo</span><span class="recent-location">Área / ubicación</span><span>Estado</span><span>Registró</span><span></span></div>${recent.map(row => `<div class="recent-row"><span class="recent-date">${escapeHtml(dateLabel(row.inspectedAt))}</span><span class="recent-finding">${escapeHtml(row.description)}</span><span class="recent-location">${escapeHtml(row.area)} · ${escapeHtml(row.location)}</span><span class="status-pill status-${escapeHtml(row.status)}">${escapeHtml(STATUS[row.status] || '')}</span><span class="recent-registered" title="${escapeHtml(row.inspectorName || row.createdByName || '—')}">${escapeHtml(row.inspectorName || row.createdByName || '—')}</span><button class="row-actions" type="button" data-edit="${escapeHtml(row.id)}" aria-label="Editar observación">↗</button></div>`).join('')}</div>` : '<div class="empty-state"><div class="empty-glyph">▧</div><h3>Tu historial empieza aquí</h3><p>Las observaciones guardadas aparecerán en este resumen.</p></div>';
+}
+
+function renderAlerts() {
+  const rows = state.records;
   const priorities = rows.filter(row => row.status === 'no_cumple' || row.status === 'parcial').sort((a, b) => priorityOrder[alertPriority(b)] - priorityOrder[alertPriority(a)] || (Number(daysOpen(b)) || 0) - (Number(daysOpen(a)) || 0));
   $('alertTotal').textContent = priorities.length;
   $('alertsBody').innerHTML = priorities.map(row => `<tr><td><span class="priority-mark priority-${alertPriority(row)}">${importanceLabel(alertPriority(row))}</span>${row.reincidenceOf ? '<span class="table-secondary recurrence-alert-note">Reincidencia</span>' : ''}</td><td><span class="importance-mark importance-${importanceOf(row)}">${importanceLabel(importanceOf(row))}</span></td><td><strong>${escapeHtml(row.inspectionNumber || inspectionNumber(row.inspectedAt))}</strong></td><td>${escapeHtml(areaTitle(row.area))}<span class="table-secondary">${escapeHtml(row.sourceSection ? `${row.sourceSection} · ` : '')}${escapeHtml(row.location)}</span></td><td><span class="finding-title">${escapeHtml(row.description)}</span>${row.reincidenceOf ? '<span class="table-secondary recurrence-alert-note">Vuelve a registrarse un hallazgo pendiente.</span>' : ''}</td><td>${escapeHtml(daysOpen(row))}</td><td><span class="status-pill status-${escapeHtml(row.status)}">${escapeHtml(STATUS[row.status])}</span></td><td><button class="button corrective-action-button" data-correct="${escapeHtml(row.id)}" type="button">Registrar corrección</button></td></tr>`).join('');
@@ -574,13 +592,20 @@ function startRecordsListener() {
     onData(snapshot.docs.map(item => ({ id: item.id, ...item.data() })));
     setConnection(true, 'Datos sincronizados con Firebase');
     $('updatedAtLabel').textContent = `Actualizado ${new Date().toLocaleTimeString('es-EC', { hour: '2-digit', minute: '2-digit' })}`;
-    render();
+    scheduleRender();
   }, error => { setConnection(false, 'Sin acceso a los datos'); showToast(friendlyError(error), true); }));
   listen(COLLECTION, rows => { state.records = rows.sort((a, b) => (b.inspectedAt || '').localeCompare(a.inspectedAt || '')); });
   listen(RUNS, rows => { state.inspectionRuns = rows.sort((a, b) => (b.inspectedAt || '').localeCompare(a.inspectedAt || '')); });
   listen(CORRECTIONS, rows => { state.corrections = rows.sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0)); });
   listen(PROGRESS, rows => { state.progress = Object.fromEntries(rows.map(row => [`${row.inspectionId}:${row.area}`, row])); });
   state.unsubscribe = () => stops.forEach(stop => stop());
+}
+
+let renderQueued = false;
+function scheduleRender() {
+  if (renderQueued) return;
+  renderQueued = true;
+  requestAnimationFrame(() => { renderQueued = false; render(); });
 }
 
 function startApp(user, role) {
@@ -1492,12 +1517,22 @@ $('closeCorrection').addEventListener('click', () => $('correctionDialog').close
 $('cancelCorrection').addEventListener('click', () => $('correctionDialog').close());
 $('filtersToggle').addEventListener('click', () => $('advancedFilters').hidden = !$('advancedFilters').hidden);
 $('clearFilters').addEventListener('click', () => { for (const id of ['filterStatus', 'filterDepartment', 'filterFrom', 'filterTo']) $(id).value = ''; $('quickSearch').value = ''; $('filterOrder').value = 'desc'; render(); });
-for (const id of ['quickSearch', 'filterStatus', 'filterDepartment', 'filterFrom', 'filterTo', 'filterOrder']) $(id).addEventListener('input', render);
+let searchRenderTimer;
+for (const id of ['quickSearch', 'filterDepartment']) $(id).addEventListener('input', () => {
+  clearTimeout(searchRenderTimer);
+  searchRenderTimer = setTimeout(render, 160);
+});
+for (const id of ['filterStatus', 'filterFrom', 'filterTo', 'filterOrder']) $(id).addEventListener('change', render);
 $('cameraInput').addEventListener('change', event => handlePhotoFiles(event.currentTarget));
 $('galleryInput').addEventListener('change', event => handlePhotoFiles(event.currentTarget));
 $('mobileMenu').addEventListener('click', () => $('sidebar').classList.toggle('open'));
 document.addEventListener('keydown', event => { if (event.key === 'Escape') $('sidebar').classList.remove('open'); });
-setInterval(() => { if (state.user) { drawNavigation(); renderCompliance(); } }, 60000);
+setInterval(() => {
+  if (!state.user) return;
+  drawNavigation();
+  if (state.tab === 'Cumplimientos') renderCompliance();
+  if (state.tab === 'Alertas') renderAlerts();
+}, 60000);
 
 initialize();
 
