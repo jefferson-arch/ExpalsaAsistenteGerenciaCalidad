@@ -1,0 +1,1020 @@
+Warning: truncated output (original token count: 36506)
+Total output lines: 1699
+
+// ===============================================================
+// Assumed data model added for mapa-calidad.html
+//
+// grados/{gradeId}: l/r/q/t/s/m/c strings and lo/hi percentages.
+// destinos/{destinationId}: tipo, nombre, grados and optional country,
+// continent, latitude and longitude fields. Each record is admin managed.
+// clientes_calidad/{clientId}: nombre/tipo and bounded optional geography.
+// A ficha técnica references an existing client document and optional city.
+// fichas_tecnicas_calidad/{id}: extracted product criteria/text and PDF metadata.
+// expalsa_calidad_dispositivos/{uid}/equipos/{deviceId}: server-managed
+// device identity, public key and active/pending/revoked status.
+// Access for this page requires the configured administrator identity, or an
+// active expalsa_calidad_accesos/{uid} record and a matching active device ID
+// in the Firebase Auth token. Fabio and Karina are trusted Calidad admins;
+// they still require an active evaluations access record but do not require
+// device approval. Device keys and status are server-managed by trusted functions.
+// expalsa_calidad_distribucion_inspectores/{id}: shared name, active flag,
+// creation/update timestamps and actor UIDs; the three distribution accounts
+// can manage this shared roster.
+// expalsa_calidad_distribuciones/{date__uid}: daily assignment map, notes,
+// checks, timestamps and creator/editor UIDs; each user reads only their own
+// records, while the configured administrator can read every user's records.
+// ===============================================================
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    function expalsaAdmin() {
+      return request.auth!=null && request.auth.token.email=='jefferson@expalsaevaluations.com' && administratorMatches();
+    }
+    function administratorMatches() {
+      let admin=get(/databases/$(database)/documents/expalsa_calidad_config/administrador).data;
+      return admin.uid==request.auth.uid && admin.email==request.auth.token.email;
+    }
+    function accountEmail() { return signedIn() && request.auth.token.email is string && request.auth.token.email.matches('^[^@]+@[^@]+$'); }
+    function accessDoc(uid) { return /databases/$(database)/documents/expalsa_calidad_accesos/$(uid); }
+    function inspector() {
+      return accountEmail() && !expalsaAdmin() && exists(accessDoc(request.auth.uid)) &&
+        get(accessDoc(request.auth.uid)).data.active == true &&
+        get(accessDoc(request.auth.uid)).data.get('deleted', false) != true &&
+        get(accessDoc(request.auth.uid)).data.email == request.auth.token.email;
+    }
+    function calidadDevicePath(uid) {
+      return /databases/$(database)/documents/expalsa_calidad_dispositivos/$(uid)/equipos/$(request.auth.token.calidadDeviceId);
+    }
+    function calidadPageAdmin() {
+      return expalsaAdmin() || calidadTrustedAdmin();
+    }
+    function calidadTrustedAdmin() {
+      return signedIn() && request.auth.token.email is string &&
+        request.auth.token.email in ['fabio@expalsaevaluations.com','karina@expalsaevaluations.com'] &&
+        inspector();
+    }
+    function calidadPageUser() {
+      return expalsaAdmin() || calidadTrustedAdmin() ||
+        (signedIn() && request.auth.token.calidadDeviceId is string &&
+         exists(calidadDevicePath(request.auth.uid)) &&
+         get(calidadDevicePath(request.auth.uid)).data.status == 'active' &&
+         inspector());
+    }
+    function validCalidadGrade(d) {
+      return d.keys().hasOnly(['l','r','lo','hi','q','t','s','m','c']) &&
+        d.keys().hasAll(['l','r','lo','hi','q','t','s','m','c']) &&
+        d.l is string && d.l.size() <= 20 && d.r is string && d.r.size() <= 40 &&
+        d.lo is number && d.lo >= 0 && d.lo <= 100 && d.hi is number && d.hi >= d.lo && d.hi <= 100 &&
+        d.q is string && d.q.size() <= 50 && d.t in ['ok','no','mid','flex'] &&
+        d.s is string && d.s.size() <= 120 && d.m is string && d.m.size() <= 120 &&
+        d.c is string && d.c.matches('^#[0-9A-Fa-f]{6}$');
+    }
+    function validCalidadDestination(d) {
+      return d.keys().hasOnly(['tipo','codigo','nombre','continente','pais','lat','lon','grados']) &&
+        d.keys().hasAll(['tipo','nombre','grados']) && d.tipo in ['pais','continente','ciudad'] &&
+        d.nombre is string && d.nombre.size() > 0 && d.nombre.size() <= 100 &&
+        d.grados is list && d.grados.size() <= 10 &&
+        (!('codigo' in d) || (d.codigo is string && d.codigo.size() <= 20)) &&
+        (!('continente' in d) || (d.continente is string && d.continente.size() <= 30)) &&
+        (!('pais' in d) || (d.pais is string && d.pais.size() <= 3)) &&
+        (!('lat' in d) || (d.lat is number && d.lat >= -90 && d.lat <= 90)) &&
+        (!('lon' in d) || (d.lon is number && d.lon >= -180 && d.lon <= 180));
+    }
+    function calidadDestinationPath(id) {
+      return /databases/$(database)/documents/destinos/$(id);
+    }
+    function calidadClientCityMatches(d) {
+      return !('ciudadId' in d) || (
+        existsAfter(calidadDestinationPath(d.ciudadId)) &&
+        getAfter(calidadDestinationPath(d.ciudadId)).data.tipo == 'ciudad' &&
+        getAfter(calidadDestinationPath(d.ciudadId)).data.pais == d.pais &&
+        getAfter(calidadDestinationPath(d.ciudadId)).data.nombre == d.ciudad);
+    }
+    function validCalidadClientLocation(d) {
+      return (('ciudadId' in d) == ('ciudad' in d)) &&
+        (('ciudadId' in d) ?
+          (d.ciudadId is string && d.ciudadId.size() > 0 && d.ciudadId.size() <= 180 &&
+           d.ciudad is string && d.ciudad.size() > 0 && d.ciudad.size() <= 100 &&
+           d.pais is string && d.pais.matches('^[A-Z]{2}$')) :
+          (('pais' in d) || ('continente' in d)));
+    }
+    function validCalidadClientGradeOverride(o) {
+      return o is map && o.keys().hasOnly(['hi','lo','r','q','m']) &&
+        o.keys().hasAll(['hi','lo','r','q','m']) &&
+        o.lo is number && o.lo >= 0 && o.lo <= 100 &&
+        o.hi is number && o.hi >= o.lo && o.hi <= 100 &&
+        o.r is string && o.r.size() <= 40 &&
+        o.q is string && o.q.size() <= 50 &&
+        o.m is string && o.m.size() <= 120;
+    }
+    function validCalidadClientGrade(item) {
+      return item is map && item.keys().hasOnly(['g','o']) &&
+        item.keys().hasAll(['g']) &&
+        item.g in ['AAA','AA','A40','A50','A60','Am','Alt'] &&
+        (!('o' in item) || validCalidadClientGradeOverride(item.o));
+    }
+    function validCalidadClientGrades(grades) {
+      return grades is list && grades.size() <= 10 &&
+        (grades.size() < 1 || validCalidadClientGrade(grades[0])) &&
+        (grades.size() < 2 || validCalidadClientGrade(grades[1])) &&
+        (grades.size() < 3 || validCalidadClientGrade(grades[2])) &&
+        (grades.size() < 4 || validCalidadClientGrade(grades[3])) &&
+        (grades.size() < 5 || validCalidadClientGrade(grades[4])) &&
+        (grades.size() < 6 || validCalidadClientGrade(grades[5])) &&
+        (grades.size() < 7 || validCalidadClientGrade(grades[6])) &&
+        (grades.size() < 8 || validCalidadClientGrade(grades[7])) &&
+        (grades.size() < 9 || validCalidadClientGrade(grades[8])) &&
+        (grades.size() < 10 || validCalidadClientGrade(grades[9]));
+    }
+    function validCalidadClient(d) {
+      return d.keys().hasOnly(['ciudadId','pais','ciudad','nombre','tipo','puerto','continente','grados']) &&
+        d.keys().hasAll(['nombre','tipo']) && validCalidadClientLocation(d) &&
+        d.nombre is string && d.nombre.size() > 0 && d.nombre.size() <= 120 &&
+        d.tipo in ['cliente','importador'] &&
+        (!('pais' in d) || (d.pais is string && d.pais.matches('^[A-Z]{2}$'))) &&
+        (!('continente' in d) || (d.continente is string && d.continente.size() > 0 && d.continente.size() <= 30)) &&
+        (!('puerto' in d) || (d.puerto is string && d.puerto.size() <= 120)) &&
+        (!('grados' in d) || validCalidadClientGrades(d.grados)) && calidadClientCityMatches(d);
+    }
+    function validFichaCalibre(c) {
+      return c is map && c.keys().hasOnly(['talla','piezasKg','uniformidad']) &&
+        c.keys().hasAll(['talla','piezasKg','uniformidad']) &&
+        c.talla is string && c.talla.size() <= 40 &&
+        c.piezasKg is string && c.piezasKg.size() <= 40 &&
+        c.uniformidad is string && c.uniformidad.size() <= 40;
+    }
+    function validFichaCalibres(a) {
+      return a is list && a.size() <= 30 &&
+        (a.size() < 1 || validFichaCalibre(a[0])) &&
+        (a.size() < 2 || validFichaCalibre(a[1])) &&
+        (a.size() < 3 || validFichaCalibre(a[2])) &&
+        (a.size() < 4 || validFichaCalibre(a[3])) &&
+        (a.size() < 5 || validFichaCalibre(a[4])) &&
+        (a.size() < 6 || validFichaCalibre(a[5])) &&
+        (a.size() < 7 || validFichaCalibre(a[6])) &&
+        (a.size() < 8 || validFichaCalibre(a[7])) &&
+        (a.size() < 9 || validFichaCalibre(a[8])) &&
+        (a.size() < 10 || validFichaCalibre(a[9])) &&
+        (a.size() < 11 || validFichaCalibre(a[10])) &&
+        (a.size() < 12 || validFichaCalibre(a[11])) &&
+        (a.size() < 13 || validFichaCalibre(a[12])) &&
+        (a.size() < 14 || validFichaCalibre(a[13])) &&
+        (a.size() < 15 || validFichaCalibre(a[14])) &&
+        (a.size() < 16 || validFichaCalibre(a[15])) &&
+        (a.size() < 17 || validFichaCalibre(a[16])) &&
+        (a.size() < 18 || validFichaCalibre(a[17])) &&
+        (a.size() < 19 || validFichaCalibre(a[18])) &&
+        (a.size() < 20 || validFichaCalibre(a[19])) &&
+        (a.size() < 21 || validFichaCalibre(a[20])) &&
+        (a.size() < 22 || validFichaCalibre(a[21])) &&
+        (a.size() < 23 || validFichaCalibre(a[22])) &&
+        (a.size() < 24 || validFichaCalibre(a[23])) &&
+        (a.size() < 25 || validFichaCalibre(a[24])) &&
+        (a.size() < 26 || validFichaCalibre(a[25])) &&
+        (a.size() < 27 || validFichaCalibre(a[26])) &&
+        (a.size() < 28 || validFichaCalibre(a[27])) &&
+        (a.size() < 29 || validFichaCalibre(a[28])) &&
+        (a.size() < 30 || validFichaCalibre(a[29]));
+    }
+    function validFichaTecnica(d, id) {
+      return id is string && id.size() > 0 && id.size() <= 180 &&
+        d.keys().hasOnly(['clienteId','clienteNombre','tipoCliente','producto','codigoProducto','categoria','criterios','materiaExtrana','sabor','pais','continente','ciudadId','ciudad','puerto','textoExtraido','pdfNombre','metadata','estado','calibres']) &&
+        d.keys().hasAll(['clienteId','clienteNombre','tipoCliente','producto','criterios','textoExtraido','pdfNombre','metadata']) &&
+        d.clienteId is string && d.clienteId.size() > 0 && d.clienteId.size() <= 180 &&
+        d.clienteNombre is string && d.clienteNombre.size() > 0 && d.clienteNombre.size() <= 120 &&
+        d.tipoCliente in ['cliente','importador'] &&
+        d.producto is string && d.producto.size() > 0 && d.producto.size() <= 200 &&
+        (!('estado' in d) || d.estado in ['activa','inactiva']) &&
+        (!('calibres' in d) || validFichaCalibres(d.calibres)) &&
+        (!('codigoProducto' in d) || (d.codigoProducto is string && d.codigoProducto.size() <= 120)) &&
+        (!('categoria' in d) || (d.categoria is string && d.categoria.size() <= 120)) &&
+        d.criterios is list && d.criterios.size() <= 25 &&
+        (!('materiaExtrana' in d) || (d.materiaExtrana is string && d.materiaExtrana.size() <= 1000)) &&
+        (!('sabor' in d) || (d.sabor is string && d.sabor.size() <= 1000)) &&
+        d.textoExtraido is string && d.textoExtraido.size() <= 50000 &&
+        d.pdfNombre is string && d.pdfNombre.size() > 0 && d.pdfNombre.size() <= 200 &&
+        d.metadata is map && d.metadata.size() <= 4 &&
+        (!('pais' in d) || (d.pais is string && d.pais.matches('^[A-Z]{2}$'))) &&
+        (!('continente' in d) || (d.continente is string && d.continente.size() > 0 && d.continente.size() <= 30)) &&
+        (!('ciudadId' in d) || (d.ciudadId is string && d.ciudadId.size() > 0 && d.ciudadId.size() <= 180)) &&
+        (!('ciudad' in d) || (d.ciudad is string && d.ciudad.size() > 0 && d.ciudad.size() <= 100)) &&
+        (!('puerto' in d) || (d.puerto is string && d.puerto.size() <= 120));
+    }
+    function photoDoc(uid) { return /databases/$(database)/documents/expalsa_calidad_fotos_perfil/$(uid); }
+    function photoPresent(uid) {
+      let photo=get(photoDoc(uid)).data;
+      return photo.uid==uid && photo.path=='expalsa_calidad_fotos/'+uid+'/perfil.jpg' && photo.origin in ['camera','gallery'];
+    }
+    function programDoc(uid) { return /databases/$(database)/documents/expalsa_calidad_programas/$(uid); }
+    function attemptDoc(uid,stage) { return /databases/$(database)/documents/expalsa_calidad_etapas/$(uid)/entregas/$(stage); }
+    function resultDoc(uid,stage) { return /databases/$(database)/documents/expalsa_calidad_resultados/$(uid)/etapas/$(stage); }
+    function sessionDoc(uid,stage) { return /databases/$(database)/documents/expalsa_calidad_sesiones/$(uid)/etapas/$(stage); }
+    function stageBank(stage) { return /databases/$(database)/documents/expalsa_calidad_cuestionarios/$(stage); }
+    function stageKey(stage) { return /databases/$(database)/documents/expalsa_calidad_claves/$(stage); }
+    function dynamicBank(version) { return /databases/$(database)/documents/expalsa_calidad_bancos/$(version); }
+    function dynamicKey(version) { return /databases/$(database)/documents/expalsa_calidad_soluciones/$(version); }
+    function stageName(n) { return n==1?'1':n==2?'2':'3'; }
+    function evaluationConfig() { return /databases/$(database)/documents/expalsa_calidad_config/evaluaciones; }
+    function retryStage(stage) { return stage in ['1_2','2_2','3_2']; }
+    function baseStage(stage) { return stage in ['1','1_2']?'1':stage in ['2','2_2']?'2':'3'; }
+    function validStage(stage,n) { return (stage in ['1','1_2'] && n==1) || (stage in ['2','2_2'] && n==2) || (stage in ['3','3_2'] && n==3); }
+    function limitValid(n) { return n is int && n>=1 && n<=180; }
+    function limitsValid(t) { return t is map && t.keys().hasOnly(['1','2','3']) && t.keys().hasAll(['1','2','3']) && limitValid(t['1']) && limitValid(t['2']) && limitValid(t['3']); }
+    function limitUnchanged(uid,stage,t) { return t[stage]==resource.data.get('timeLimits',{}).get(stage,-1) || !exists(sessionDoc(uid,stage)) || t[stage]==get(sessionDoc(uid,stage)).data.durationMinutes; }
+    function theoryDone(uid,stage) {
+      return exists(attemptDoc(uid,stage)) && get(attemptDoc(uid,stage)).data.status in ['submitted','graded'] &&
+        (get(attemptDoc(uid,stage)).data.status=='graded' || exists(automaticResultDoc(uid,stage)));
+    }
+    function stageNumber(stage) { return stage in ['1','1_2']?1:stage in ['2','2_2']?2:3; }
+    function progressKey(n) { return n==1?'1':n==2?'2':'3'; }
+    function progressOf(p) { return p.get('stageProgress',{'version':1,'active':1,'closed':{}}); }
+    function activeStage(uid) { return exists(programDoc(uid))?progressOf(get(programDoc(uid)).data).active:1; }
+    function evaluationStage(d) { return d.get('evaluationStage',1); }
+    function dailyStageOpen(d) { return evaluationStage(d) in [1,2,3] && evaluationStage(d)==activeStage(d.uid); }
+    function previousClosed(p,n) { return n==1 || progressOf(p).closed.keys().hasAny([n==2?'1':'2']); }
+    function progressValid(uid,d,old) {
+      let a=progressOf(old);
+      let b=progressOf(d);
+      let key=progressKey(a.active);
+      return b==a || (a.active in [1,2,3] && d.active==true && activeTarget(uid) &&
+        b is map && b.keys().hasOnly(['version','active','closed']) && b.version==1 && b.active==a.active+1 &&
+        b.closed is map && b.closed.keys().hasOnly(['1','2','3']) && b.closed.size()==a.closed.size()+1 &&
+        b.closed.diff(a.closed).affectedKeys().hasOnly([key]) && b.closed.keys().hasAll(a.closed.keys()) &&
+        closeEntryValid(uid,key,a.active,b.closed[key],d));
+    }
+    function closeEntryValid(uid,key,n,c,p) {
+      let practice=get(dailyDoc(c.practiceId)).data;
+      return c is map && c.keys().hasOnly(['at','by','practiceId']) && c.at==request.time && c.by==request.auth.uid &&
+        theoryDone(uid,key) && (!p.get('retakes',{}).get(key,{}).get('enabled',false) || theoryDone(uid,key+'_2')) &&
+        practice.uid==uid && evaluationStage(practice)==n && practice.get('voided',false)==false &&
+        (practice.get('v2',{}).get('kind','')=='practical'?(practice.v2.values.keys().hasAll(['P1_1', 'P2_1', 'P3_1', 'P3_2', 'P4_1', 'P5_1', 'P5_2', 'P5_3', 'P10_1', 'P11_1', 'P11_2', 'P11_3', 'P11_4', 'P11_5', 'P11_6', 'P11_7', 'P11_8', 'P12_1', 'P13_1', 'P13_2', 'P13_3', 'P13_4', 'P13_5', 'P13_6', 'P13_7', 'P13_8', 'P13_9']) && practice.v2.values.keys().hasAny(['P6_1', 'P6_2', 'P6_3', 'P6_4', 'P6_5', 'P6_6', 'P6_7', 'P6_8']) && practice.v2.values.keys().hasAny(['P7_1', 'P7_2', 'P7_3', 'P7_4', 'P7_5', 'P7_6', 'P7_7', 'P7_8']) && practice.v2.values.keys().hasAny(['P8_1', 'P8_2', 'P8_3', 'P8_4', 'P8_5', 'P8_6', 'P8_7', 'P8_8']) && practice.v2.values.keys().hasAny(['P9_1', 'P9_2', 'P9_3', 'P9_4', 'P9_5', 'P9_6', 'P9_7', 'P9_8'])):practice.ratings.values().hasAny([0,1,2,3,4])) && practice.createdAt<=request.time;
+    }
+    function rawRecordStage(d) {
+      let profile=getAfter(/databases/$(database)/documents/expalsa_calidad_perfiles/$(d.payload.profileId)).data.payload;
+      return evaluationStage(d.payload) in [1,2,3] && evaluationStage(d.payload)==activeStage(profile.accountUid);
+    }
+    function trainingStageValid(d,old) {
+      let added=d.get('training',[]).removeAll(old.get('training',[]));
+      let removed=old.get('training',[]).removeAll(d.get('training',[]));
+      let stage=activeStage(d.accountUid);
+      return added.size()<=1 && removed.size()<=1 &&
+        (added.size()==0 || (stage in [1,2,3] && evaluationStage(added[0])==stage)) &&
+        (removed.size()==0 || (stage in [1,2,3] && evaluationStage(removed[0])==stage));
+    }
+    function programCanClose(uid,d,a) {
+      return d.diff(a).affectedKeys().hasOnly(['stageProgress','enabledStages','mode','updatedAt','updatedBy']) &&
+        progressOf(d).active==progressOf(a).active+1 && d.mode=='stages' && d.updatedAt==request.time && d.updatedBy==request.auth.uid &&
+        progressValid(uid,d,a) && manualStageFlags(uid,d,a.get('enabledStages',{}));
+    }
+    function stageDue(uid,stage) {
+      let p=get(programDoc(uid)).data;
+      return p.active==true && p.resultAccessVersion==2 && progressOf(p).active==stageNumber(stage) &&
+        (retryStage(stage) ? p.get('retakes',{}).get(baseStage(stage),{}).get('enabled',false)==true :
+        ((p.get('mode','legacy')=='stages' && p.get('enabledStages',{}).get(stage,false)==true) ||
+         (exists(sessionDoc(uid,stage)) && get(sessionDoc(uid,stage)).data.status=='active')));
+    }
+    function sessionOpen(uid,stage) {
+      let s=get(sessionDoc(uid,stage)).data;
+      return s.status=='active' && request.time<s.startedAt+duration.value(s.durationMinutes*60,'s');
+    }
+    function sessionExpired(uid,stage) {
+      let s=get(sessionDoc(uid,stage)).data;
+      return s.status=='active' && request.time>=s.startedAt+duration.value(s.durationMinutes*60,'s');
+    }
+    function timingMatches(d,a) {
+      return (a.keys().hasAll(['startedAt','durationMinutes']) && d.keys().hasAll(['startedAt','durationMinutes']) && d.startedAt==a.startedAt && d.durationMinutes==a.durationMinutes) ||
+        (!a.keys().hasAny(['startedAt','durationMinutes']) && !d.keys().hasAny(['startedAt','durationMinutes']));
+    }
+    function resultMatches(uid,stage,d) {
+      let a=getAfter(attemptDoc(uid,stage)).data;
+      return d.keys().hasOnly(['uid','email','stage','status','startedAt','durationMinutes','submittedAt','score','skillScore','integratedScore','gradedAt']) &&
+        d.keys().hasAll(['uid','email','stage','status']) && d.uid==uid && d.uid==a.uid && d.email==a.email && validStage(stage,d.stage) && d.stage==a.stage && d.status==a.status && timingMatches(d,a) &&
+        ((a.status=='in_progress' && d.keys().hasOnly(['uid','email','stage','status','startedAt','durationMinutes'])) ||
+         (a.status=='submitted' && d.submittedAt==a.submittedAt && !d.keys().hasAny(['score','skillScore','integratedScore','gradedAt'])) ||
+         (a.status=='graded' && d.submittedAt==a.submittedAt && d.score==a.score && d.skillScore==a.skillScore && d.integratedScore==a.integratedScore && d.gradedAt==a.gradedAt));
+    }
+    function answerValid(a,q,minimum) { let v=a.get(q.id,-1); return v is int && v>=minimum && v<=3; }
+    function answersValid(a,b,minimum) {
+      return a is map && a.keys().hasOnly([b.questions[0].id,b.questions[1].id,b.questions[2].id,b.questions[3].id,b.questions[4].id,b.questions[5].id,b.questions[6].id,b.questions[7].id,b.questions[8].id,b.questions[9].id,b.questions[10].id,b.questions[11].id]) &&
+        answerValid(a,b.questions[0],minimum) && answerValid(a,b.questions[1],minimum) && answerValid(a,b.questions[2],minimum) && answerValid(a,b.questions[3],minimum) &&
+        answerValid(a,b.questions[4],minimum) && answerValid(a,b.questions[5],minimum) && answerValid(a,b.questions[6],minimum) && answerValid(a,b.questions[7],minimum) &&
+        answerValid(a,b.questions[8],minimum) && answerValid(a,b.questions[9],minimum) && answerValid(a,b.questions[10],minimum) && answerValid(a,b.questions[11],minimum);
+    }
+    function questionValid(q) {
+      return q.keys().hasOnly(['id','topic','text','options']) && q.id is string && q.topic is string && q.text is string &&
+        q.options is list && q.options.size()==4;
+    }
+    function publishedBankValid(stage,d) {
+      return d.keys().hasOnly(['stage','version','title','questions','skills','updatedAt']) && validStage(stage,d.stage) &&
+        d.version is string && d.version.size()>0 && d.title is string && d.updatedAt==request.time && d.skills is list && d.skills.size()==4 &&
+        d.questions is list && d.questions.size()==12 &&
+        questionValid(d.questions[0]) && questionValid(d.questions[1]) && questionValid(d.questions[2]) && questionValid(d.questions[3]) &&
+        questionValid(d.questions[4]) && questionValid(d.questions[5]) && questionValid(d.questions[6]) && questionValid(d.questions[7]) &&
+        questionValid(d.questions[8]) && questionValid(d.questions[9]) && questionValid(d.questions[10]) && questionValid(d.questions[11]) &&
+        getAfter(stageKey(stage)).data.stage==d.stage && getAfter(stageKey(stage)).data.version==d.version;
+    }
+    function publishedKeyValid(stage,d) {
+      let b=getAfter(stageBank(stage)).data;
+      return d.keys().hasOnly(['stage','version','keys','updatedAt']) && validStage(stage,d.stage) && d.updatedAt==request.time &&
+        d.stage==b.stage && d.version==b.version && d.keys is map && d.keys.size()==12 && answersValid(d.keys,b,0);
+    }
+    function dynamicBankValid(version,d) {
+      return d.keys().hasOnly(['schema','stage','version','title','questionIds','writtenIds','questions','updatedAt']) &&
+        d.schema in [2,3] && d.stage in [1,2,3] && d.version==version && d.title is string && d.updatedAt==request.time &&
+        d.questions is list && (d.schema!=3 || d.questions.size() in [28,30,43,44]) && d.questionIds is list && d.questions.size()==d.questionIds.size() && d.questions.size()>=1 && d.questions.size()<=60 &&
+        d.questionIds.toSet().size()==d.questionIds.size() && d.writtenIds is list && d.writtenIds.hasOnly(d.questionIds) &&
+        getAfter(dynamicKey(version)).data.version==version && getAfter(dynamicKey(version)).data.stage==d.stage;
+    }
+    function dynamicKeyValid(version,d) {
+      let b=getAfter(dynamicBank(version)).data;
+      return d.keys().hasOnly(['schema','stage','version','keys','canonicalAnswers','updatedAt']) && d.schema in [2,3] && d.version==version &&
+        d.stage==b.stage && d.updatedAt==request.time && d.keys is map && d.keys.keys().hasOnly(b.questionIds) && d.keys.keys().hasAll(b.questionIds) && (!(b.questionIds.size() in [43,44]) || (d.canonicalAnswers is map && d.canonicalAnswers.keys().hasOnly(b.questionIds) && d.canonicalAnswers.keys().hasAll(b.questionIds)));
+    }
+    function configurationValid(d) {
+      return d.keys().hasOnly(['schema','versions','counts','durationMinutes','updatedAt']) && d.schema in [2,3] && d.updatedAt==request.time && d.durationMinutes in [15,30] &&
+        d.versions.keys().hasOnly(['1','2','3']) && d.versions.keys().hasAll(['1','2','3']) && d.counts.keys().hasOnly(['1','2','3']) && d.counts.keys().hasAll(['1','2','3']) &&
+        get(dynamicBank(d.versions['1'])).data.stage==1 && get(dynamicKey(d.versions['1'])).data.stage==1 && d.counts['1']==get(dynamicBank(d.versions['1'])).data.questions.size() &&
+        get(dynamicBank(d.versions['2'])).data.stage==2 && get(dynamicKey(d.versions['2'])).data.stage==2 && d.counts['2']==get(dynamicBank(d.versions['2'])).data.questions.size() &&
+        get(dynamicBank(d.versions['3'])).data.stage==3 && get(dynamicKey(d.versions['3'])).data.stage==3 && d.counts['3']==get(dynamicBank(d.versions['3'])).data.questions.size();
+    }
+    function bankAvailable(uid,stage) {
+      let a=getAfter(attemptDoc(uid,stage)).data;
+      return a.get('bankSchema',1) in [2,3] ? exists(dynamicBank(a.version)) : exists(stageBank(stage));
+    }
+    function automaticAnswersValid(a,version,minimum) {
+      let ids=get(dynamicBank(version)).data.questionIds;
+      return a is map && a.size()<=ids.size() && a.keys().hasOnly(ids) &&
+        (minimum<0 || (a.keys().hasAll(ids) && !a.values().hasAny([''])));
+    }
+    function initialBankValid(d,stage) {
+      return d.get('bankSchema',1) in [2,3] ?
+        (d.version==(retryStage(stage)?get(programDoc(d.uid)).data.retakes[baseStage(stage)].version:assignedVersion(d.uid,stage,get(evaluationConfig()).data.versions[stage])) && get(dynamicBank(d.version)).data.stage==d.stage &&
+         d.bankSchema==get(dynamicBank(d.version)).data.schema && (d.bankSchema==3 ? d.answers is map && d.answers.size()==0 : d.answers=='{}')) :
+        (!d.keys().hasAny(['bankSchema']) && d.version=='' && d.answers is map && d.answers.size()==0);
+    }
+    function attemptAnswersValid(stage,minimum) {
+      let d=request.resource.data;
+      return resource.data.get('bankSchema',1)==3 ?
+        (d.version==resource.data.version && automaticAnswersValid(d.answers,d.version,minimum)) :
+        resource.data.get('bankSchema',1)==2 ?
+        (d.version==resource.data.version && d.answers is string && d.answers.size()<=40000 && d.answers.size()>=(minimum==0?3:2)) :
+        (d.version==get(stageBank(stage)).data.version && answersValid(d.answers,get(stageBank(stage)).data,minimum));
+    }
+    function writtenScoresValid(d) {
+      let ids=get(dynamicBank(d.version)).data.writtenIds;
+      return d.writtenScores is map && d.writtenScores.keys().hasOnly(ids) && d.writtenScores.keys().hasAll(ids) &&
+        d.writtenScores.values().hasOnly([0,0.25,0.5,0.75,1]);
+    }
+    function identityStable() {
+      return request.resource.data.uid==resource.data.uid && request.resource.data.email==resource.data.email && request.resource.data.stage==resource.data.stage &&
+        request.resource.data.startedAt==resource.data.startedAt && request.resource.data.durationMinutes==resource.data.durationMinutes &&
+        request.resource.data.get('bankSchema',1)==resource.data.get('bankSchema',1);
+    }
+    function finalDelivery(uid,stage) {
+      return resource.data.status=='in_progress' && request.resource.data.status=='submitted' && identityStable() &&
+        request.resource.data.keys().hasOnly(['uid','email','stage','startedAt','durationMinutes','version','answers','status','submittedAt','submissionKind','bankSchema']) &&
+        request.resource.data.submittedAt==request.time && getAfter(sessionDoc(uid,stage)).data.status=='closed' && resultMatches(uid,stage,getAfter(resultDoc(uid,stage)).data);
+    }
+    function expiredDelivery(uid,stage) {
+      return finalDelivery(uid,stage) && sessionExpired(uid,stage) && request.resource.data.submissionKind=='expired' &&
+        request.resource.data.answers==resource.data.answers && request.resource.data.version==resource.data.version;
+    }
+    function skillValid(s,id) {
+      let r=s.rating;
+      let e=s.evidence;
+      return s.id==id && r is int && r>=0 && r<=4 && e is string && e.size()>=20;
+    }
+    function gradedDelivery(uid,stage) {
+      let d=request.resource.data;
+      let a=resource.data;
+      return activeStage(uid)==stageNumber(stage) && a.status=='submitted' && d.status=='graded' &&
+        d.keys().hasOnly(['uid','email','stage','version','answers','status','submittedAt','startedAt','durationMinutes','submissionKind','bankSchema','writtenScores',
+          'score','correctCount','total','skillScore','skills','integratedScore','observation','gradedAt','gradedBy']) &&
+        d.diff(a).affectedKeys().hasOnly(['status','score','correctCount','total','skillScore','skills','integratedScore','observation','gradedAt','gradedBy','writtenScores']) &&
+        d.score is number && d.score>=0 && d.score<=100 && d.correctCount is int && d.total is int &&
+        d.skillScore is int && d.skillScore>=0 && d.skillScore<=100 && d.integratedScore is int && d.integratedScore>=0 && d.integratedScore<=100 &&
+        d.skills is list && d.skills.size()==10 &&
+        skillValid(d.skills[0],'C1') && skillValid(d.skills[1],'C2') && skillValid(d.skills[2],'C3') && skillValid(d.skills[3],'C4') && skillValid(d.skills[4],'C5') &&
+        skillValid(d.skills[5],'C6') && skillValid(d.skills[6],'C7') && skillValid(d.skills[7],'C8') && skillValid(d.skills[8],'C9') && skillValid(d.skills[9],'C10') &&
+        d.observation is string && d.observation.size()>=12 && d.gradedAt==request.time && d.gradedBy==request.auth.token.email &&
+        (a.get('bankSchema',1)==2?writtenScoresValid(d):!d.keys().hasAny(['writtenScores'])) &&
+        resultMatches(uid,stage,getAfter(resultDoc(uid,stage)).data);
+    }
+
+    function automaticResultDoc(uid,stage) { return /databases/$(database)/documents/expalsa_calidad_autocalificaciones/$(uid)/etapas/$(stage); }
+    function automaticReader(uid) { return expalsaAdmin() || (inspector() && request.auth.uid==uid); }
+    function closedForScoring(uid,stage) {
+      let a=get(attemptDoc(uid,stage)).data;
+      return a.status in ['submitted','graded'] && a.uid==uid && validStage(stage,a.stage) &&
+        get(sessionDoc(uid,stage)).data.status=='closed' &&
+        (a.get('bankSchema',1)==3 || a.get('bankSchema',1)==1);
+    }
+    function automaticTotal(uid,stage) {
+      let a=get(attemptDoc(uid,stage)).data;
+      return a.get('bankSchema',1)==3 ? get(dynamicBank(a.version)).data.questionIds.size() : get(stageBank(stage)).data.questions.size();
+    }
+    function automaticThirty(a,b,k) {
+      let ids=b.questionIds;
+      return (a.get(ids[0],'') in k[ids[0]].canonical ? 1 : 0) + (a.get(ids[1],'') in k[ids[1]].canonical ? 1 : 0) + (a.get(ids[2],'') in k[ids[2]].canonical ? 1 : 0) + (a.get(ids[3],'') in k[ids[3]].canonical ? 1 : 0) + (a.get(ids[4],'') in k[ids[4]].canonical ? 1 : 0) + (a.get(ids[5],'') in k[ids[5]].canonical ? 1 : 0) + (a.get(ids[6],'') in k[ids[6]].canonical ? 1 : 0) + (a.get(ids[7],'') in k[ids[7]].canonical ? 1 : 0) + (a.get(ids[8],'') in k[ids[8]].canonical ? 1 : 0) + (a.get(ids[9],'') in k[ids[9]].canonical ? 1 : 0) + (a.get(ids[10],'') in k[ids[10]].canonical ? 1 : 0) + (a.get(ids[11],'') in k[ids[11]].canonical ? 1 : 0) + (a.get(ids[12],'') in k[ids[12]].canonical ? 1 : 0) + (a.get(ids[13],'') in k[ids[13]].canonical ? 1 : 0) + (a.get(ids[14],'') in k[ids[14]].canonical ? 1 : 0) + (a.get(ids[15],'') in k[ids[15]].canonical ? 1 : 0) + (a.get(ids[16],'') in k[ids[16]].canonical ? 1 : 0) + (a.get(ids[17],'') in k[ids[17]].canonical ? 1 : 0) + (a.get(ids[18],'') in k[ids[18]].canonical ? 1 : 0) + (a.get(ids[19],'') in k[ids[19]].canonical ? 1 : 0) + (a.get(ids[20],'') in k[ids[20]].canonical ? 1 : 0) + (a.get(ids[21],'') in k[ids[21]].canonical ? 1 : 0) + (a.get(ids[22],'') in k[ids[22]].canonical ? 1 : 0) + (a.get(ids[23],'') in k[ids[23]].canonical ? 1 : 0) + (a.get(ids[24],'') in k[ids[24]].canonical ? 1 : 0) + (a.get(ids[25],'') in k[ids[25]].canonical ? 1 : 0) + (a.get(ids[26],'') in k[ids[26]].canonical ? 1 : 0) + (a.get(ids[27],'') in k[ids[27]].canonical ? 1 : 0) + (ids.size()>28 && a.get(ids[28],'') in k[ids[28]].canonical ? 1 : 0) + (ids.size()>29 && a.get(ids[29],'') in k[ids[29]].canonical ? 1 : 0);
+    }
+    function legacyTwelve(a,b,k) { return (a.get(b.questions[0].id,-1)==k[b.questions[0].id]?1:0) + (a.get(b.questions[1].id,-1)==k[b.questions[1].id]?1:0) + (a.get(b.questions[2].id,-1)==k[b.questions[2].id]?1:0) + (a.get(b.questions[3].id,-1)==k[b.questions[3].id]?1:0) + (a.get(b.questions[4].id,-1)==k[b.questions[4].id]?1:0) + (a.get(b.questions[5].id,-1)==k[b.questions[5].id]?1:0) + (a.get(b.questions[6].id,-1)==k[b.questions[6].id]?1:0) + (a.get(b.questions[7].id,-1)==k[b.questions[7].id]?1:0) + (a.get(b.questions[8].id,-1)==k[b.questions[8].id]?1:0) + (a.get(b.questions[9].id,-1)==k[b.questions[9].id]?1:0) + (a.get(b.questions[10].id,-1)==k[b.questions[10].id]?1:0) + (a.get(b.questions[11].id,-1)==k[b.questions[11].id]?1:0); }
+    function automaticCount(uid,stage) {
+      let a=get(attemptDoc(uid,stage)).data;
+      return a.get('bankSchema',1)==3 ?
+        (get(dynamicBank(a.version)).data.questionIds.size() in [43,44] ? get(dynamicBank(a.version)).data.questionIds.size()-a.answers.diff(get(dynamicKey(a.version)).data.canonicalAnswers).affectedKeys().size() : automaticThirty(a.answers,get(dynamicBank(a.version)).data,get(dynamicKey(a.version)).data.keys)) :
+        legacyTwelve(a.answers,get(stageBank(stage)).data,get(stageKey(stage)).data.keys);
+    }
+    match /expalsa_calidad_autocalificaciones/{uid}/etapas/{stage} {
+      allow get: if automaticReader(uid);
+      allow list: if expalsaAdmin();
+      allow create: if automaticReader(uid) && closedForScoring(uid,stage) &&
+        request.resource.data.keys().hasOnly(['uid','stage','correctCount','total','gradedAt']) &&
+        request.resource.data.keys().hasAll(['uid','stage','correctCount','total','gradedAt']) &&
+        request.resource.data.uid==uid && validStage(stage,request.resource.data.stage) &&
+        request.resource.data.correctCount is int &&
+        request.resource.data.correctCount>=0 &&
+        request.resource.data.total==automaticTotal(uid,stage) &&
+        request.resource.data.correctCount<=request.resource.data.total &&
+        request.resource.data.gradedAt==request.time &&
+        
+        
+        
+        (expalsaAdmin() ||
+          request.resource.data.correctCount==automaticCount(uid,stage));
+      allow update,delete: if false;
+    }
+    match /expalsa_calidad_puntuacion/{uid}/etapas/{stage}/comprobaciones/{count} {
+      allow get: if automaticReader(uid) && count.matches('^(0|[1-3]?[0-9]|4[0-3])$') &&
+        closedForScoring(uid,stage) && int(count)<=automaticCount(uid,stage);
+      allow list,create,update,delete: if false;
+    }
+
+    match /expalsa_calidad_config/{id} {
+      allow get: if (id=='administrador' && expalsaAdmin()) || (id=='evaluaciones' && (expalsaAdmin() || inspector()));
+      allow create,update: if id=='evaluaciones' && expalsaAdmin() && configurationValid(request.resource.data);
+      allow list,delete: if false;
+    }
+    
+    function accessDataValid(d) {
+      return d.keys().hasOnly(['email','active','role','note','deleted','deletedAt','deletedBy']) &&
+        d.keys().hasAll(['email','active','role']) &&
+        d.email is string && d.email.matches('^[^@]+@[^@]+$') &&
+        d.active is bool && d.role=='inspector' &&
+        (!d.keys().hasAny(['deleted']) || d.deleted is bool) &&
+        (!d.keys().hasAny(['deletedAt']) || d.deletedAt is timestamp) &&
+        (!d.keys().hasAny(['deletedBy']) || d.deletedBy is string) &&
+        (d.get('deleted',false)!=true ||
+          (d.active==false && d.keys().hasAll(['deletedAt','deletedBy'])));
+    }
+    function newDeletionAudited(d) {
+      return resource.data.get('deleted',false)==true || d.get('deleted',false)!=true ||
+        (d.deletedAt==request.time && d.deletedBy==request.auth.uid);
+    }
+    match /expalsa_calidad_accesos/{uid} {
+      allow get: if expalsaAdmin() || (signedIn() && request.auth.uid==uid);
+      allow list: if expalsaAdmin();
+      allow create: if expalsaAdmin() && accessDataValid(request.resource.data) && request.resource.data.get('deleted',false)!=true;
+      allow update: if expalsaAdmin() && accessDataValid(request.resource.data) && newDeletionAudited(request.resource.data);
+      allow delete: if false; 
+    }
+
+    
+    function jpegValid(d) {
+      return d.jpeg is string && d.jpeg.size()>4 && d.jpeg.size()<=280000 && d.jpeg.matches('^/9j/[A-Za-z0-9+/=]+$') &&
+        d.width is int && d.width>0 && d.width<=1600 && d.height is int && d.height>0 && d.height<=1600 &&
+        d.size is int && d.size>0 && d.size<=210000;
+    }
+    function photoDataValid(uid,d) {
+      return d.keys().hasOnly(['uid','path','origin','uploadedBy','updatedAt','storage','jpeg','width','height','size']) &&
+        d.keys().hasAll(['uid','path','origin','uploadedBy','updatedAt']) &&
+        d.uid==uid && d.path=='expalsa_calidad_fotos/'+uid+'/perfil.jpg' &&
+        ((!d.keys().hasAny(['storage','jpeg','width','height','size'])) || (d.storage=='firestore' && jpegValid(d))) &&
+        d.origin in ['camera','gallery'] && d.updatedAt==request.time &&
+        ((d.origin=='camera' && inspector() && request.auth.uid==uid && d.uploadedBy==uid) ||
+         (expalsaAdmin() && exists(accessDoc(uid)) && get(accessDoc(uid)).data.active==true &&
+          get(accessDoc(uid)).data.get('deleted',false)!=true && d.uploadedBy==request.auth.uid));
+    }
+    match /expalsa_calidad_evidencias/{id} {
+      allow get,list: if expalsaAdmin();
+      allow create: if expalsaAdmin() && id.matches('^IMG-[A-Za-z0-9-]{8,80}$') &&
+        request.resource.data.keys().hasOnly(['uid','recordId','kind','jpeg','width','height','size','origin','createdBy','createdAt']) &&
+        (activeTarget(request.resource.data.uid) || request.resource.data.uid==request.auth.uid) &&
+        shortText(request.resource.data.recordId,1,180) &&
+        request.resource.data.kind in ['arranque','monitoreo','bpm','palas','escalamiento','observaciones','capacitacion','formacion','gestion','diario','acompanamiento'] &&
+        request.resource.data.origin in ['camera','gallery'] && jpegValid(request.resource.data) &&
+        request.resource.data.createdBy==request.auth.uid && request.resource.data.createdAt==request.time;
+      allow update,delete: if false;
+    }
+    match /expalsa_calidad_fotos_perfil/{uid} {
+      allow get: if expalsaAdmin() || (inspector() && request.auth.uid==uid);
+      allow list: if expalsaAdmin();
+      allow create: if photoDataValid(uid,request.resource.data);
+      allow update: if photoDataValid(uid,request.resource.data) &&
+        request.resource.data.uid==resource.data.uid &&
+        request.resource.data.path==resource.data.path;
+      allow delete: if false;
+    }
+    match /expalsa_calidad_solicitudes/{uid} {
+      allow get: if expalsaAdmin() || (accountEmail() && request.auth.uid==uid);
+      allow list: if expalsaAdmin();
+      allow create: if accountEmail() && request.auth.uid==uid &&
+        (!exists(accessDoc(uid)) || get(accessDoc(uid)).data.get('deleted',false)!=true) && request.resource.data.keys().h…16506 tokens truncated…[2]) && capBoardScore(s[3]) && capBoardScore(s[4])
+      && capBoardScore(s[5]) && capBoardScore(s[6]) && capBoardScore(s[7]) && capBoardScore(s[8]) && capBoardScore(s[9]); }
+    function capBoardRowValid(r) { return r is map && r.keys().hasOnly(['name','scores']) && r.keys().hasAll(['name','scores'])
+      && r.name is string && r.name.size() >= 1 && r.name.size() <= 100 && capBoardScoresValid(r.scores); }
+    function capBoardRowsValid(rows) { return rows is list && rows.size() <= 10
+      && (rows.size() < 1 || capBoardRowValid(rows[0])) && (rows.size() < 2 || capBoardRowValid(rows[1]))
+      && (rows.size() < 3 || capBoardRowValid(rows[2])) && (rows.size() < 4 || capBoardRowValid(rows[3]))
+      && (rows.size() < 5 || capBoardRowValid(rows[4])) && (rows.size() < 6 || capBoardRowValid(rows[5]))
+      && (rows.size() < 7 || capBoardRowValid(rows[6])) && (rows.size() < 8 || capBoardRowValid(rows[7]))
+      && (rows.size() < 9 || capBoardRowValid(rows[8])) && (rows.size() < 10 || capBoardRowValid(rows[9])); }
+    match /expalsa_calidad_capacitacion_tablero/{recordId} {
+      allow get: if recordId == 'cohorte_actual' && (expalsaAdmin() || inspector());
+      allow list, delete: if false;
+      allow create, update: if recordId == 'cohorte_actual' && expalsaAdmin()
+        && request.resource.data.keys().hasOnly(['schema','inspectors','updatedAt'])
+        && request.resource.data.keys().hasAll(['schema','inspectors','updatedAt'])
+        && request.resource.data.schema == 1 && capBoardRowsValid(request.resource.data.inspectors)
+        && request.resource.data.updatedAt == request.time;
+    }
+    match /expalsa_capacitacion_2026_participantes/{participantId} {
+      allow get, list: if expalsaAdmin();
+      // Membership changes go through manageTrainingGroups, which validates
+      // identity across every group in a serialized server transaction.
+      // groupNumber is a positive group number; absent means legacy Group 1.
+      allow create, update, delete: if false;
+    }
+    match /expalsa_capacitacion_2026_grupos/{groupId} {
+      // Server-only metadata: number, name, jpeg, rev and audit timestamps.
+      // One responsible per group; participant references exactly one number.
+      allow read, write: if false;
+    }
+    function capParticipantActive(personId) {
+      let p = get(/databases/$(database)/documents/expalsa_capacitacion_2026_participantes/$(personId)).data;
+      return p.active == true && p.get('deleted', false) != true;
+    }
+    function capSessionValid(d, sid) {
+      return expalsaAdmin() && capParticipantActive(d.personId)
+        && d.keys().hasOnly(['id','personId','personName','station','day','date','minutes','attendance','ratings','notes','followup','followupResolved','evidenceImage','status','rev','createdAt','updatedAt','updatedBy'])
+        && d.keys().hasAll(['id','personId','personName','station','day','date','minutes','attendance','ratings','notes','followup','followupResolved','evidenceImage','status','rev','createdAt','updatedAt','updatedBy'])
+        && d.id == sid && d.personId is string && d.personId.size() <= 70
+        && d.personName is string && d.personName.size() <= 100
+        && d.station in ['M02','M05','M06','M07','M08','M09','M10','B12','B345','T01']
+        && d.day is int && d.day >= 1 && d.day <= 10
+        && d.date is string && d.date.matches('[0-9]{4}-[0-9]{2}-[0-9]{2}')
+        && d.minutes is int && d.minutes >= 0 && d.minutes <= 480
+        && d.attendance in ['asistio','no_asistio','reprogramado']
+        && d.ratings is map && d.ratings.size() <= 10
+        && d.notes is string && d.notes.size() <= 8000
+        && d.followup is string && d.followup.size() <= 3000
+        && d.followupResolved is bool
+        && d.evidenceImage is string && d.evidenceImage.size() <= 145000
+        && (d.evidenceImage == '' || d.evidenceImage.matches('data:image/jpeg;base64,.*'))
+        && d.status in ['draft','done']
+        && d.rev is int && d.rev >= 1
+        && d.updatedBy == request.auth.uid && d.updatedAt == request.time;
+    }
+    match /expalsa_capacitacion_2026_sesiones/{sessionId} {
+      allow get, list: if expalsaAdmin();
+      allow create: if capSessionValid(request.resource.data, sessionId)
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.rev == 1
+        && exists(/databases/$(database)/documents/expalsa_capacitacion_2026_participantes/$(request.resource.data.personId));
+      allow update: if capSessionValid(request.resource.data, sessionId)
+        && request.resource.data.rev == resource.data.rev + 1
+        && request.resource.data.id == resource.data.id
+        && request.resource.data.personId == resource.data.personId
+        && request.resource.data.day == resource.data.day
+        && request.resource.data.createdAt == resource.data.createdAt;
+      allow delete: if false;
+      match /fotos/{photoId} {
+        allow get, list: if expalsaAdmin();
+        allow create: if expalsaAdmin()
+          && capParticipantActive(get(/databases/$(database)/documents/expalsa_capacitacion_2026_sesiones/$(sessionId)).data.personId)
+          && photoId.matches('^FT_[A-Za-z0-9]{12,64}$')
+          && exists(/databases/$(database)/documents/expalsa_capacitacion_2026_sesiones/$(sessionId))
+          && get(/databases/$(database)/documents/expalsa_capacitacion_2026_sesiones/$(sessionId)).data.status == 'draft'
+          && request.resource.data.keys().hasOnly(['sessionId','personId','day','jpeg','width','height','size','origin','criterionId','createdBy','createdAt'])
+          && request.resource.data.keys().hasAll(['sessionId','personId','day','jpeg','width','height','size','origin','createdBy','createdAt'])
+          && request.resource.data.sessionId == sessionId
+          && request.resource.data.personId == get(/databases/$(database)/documents/expalsa_capacitacion_2026_sesiones/$(sessionId)).data.personId
+          && request.resource.data.day == get(/databases/$(database)/documents/expalsa_capacitacion_2026_sesiones/$(sessionId)).data.day
+          && request.resource.data.jpeg is string
+          && request.resource.data.jpeg.size() <= 175000
+          && request.resource.data.jpeg.matches('^data:image/jpeg;base64,[A-Za-z0-9+/=]+$')
+          && request.resource.data.width is int && request.resource.data.width >= 1 && request.resource.data.width <= 960
+          && request.resource.data.height is int && request.resource.data.height >= 1 && request.resource.data.height <= 960
+          && request.resource.data.size is int && request.resource.data.size > 0 && request.resource.data.size <= 132000
+          && request.resource.data.origin in ['camera','gallery']
+          && (!request.resource.data.keys().hasAny(['criterionId'])
+              || (request.resource.data.criterionId is string
+                  && (request.resource.data.criterionId == '' || request.resource.data.criterionId.matches('^D(10|[1-9])_[1-4]$'))))
+          && request.resource.data.createdBy == request.auth.uid
+          && request.resource.data.createdAt == request.time;
+        allow update: if false;
+        allow delete: if expalsaAdmin()
+          && exists(/databases/$(database)/documents/expalsa_capacitacion_2026_sesiones/$(sessionId))
+          && get(/databases/$(database)/documents/expalsa_capacitacion_2026_sesiones/$(sessionId)).data.status == 'draft';
+      }
+    }
+
+
+    // Seguimiento del plan firmado 6.1 y 6.2. Solo administrador.
+    // Modelo: id y type inmutables; payload tipado por formulario; revision incremental.
+    // No elimina ni modifica las reglas de los modulos existentes.
+    match /expalsa_capacitacion_2026_documentos/{docId} {
+      allow get: if expalsaAdmin();
+      allow list, write: if false;
+    }
+    function capComplementPayload(d) {
+      return d.payload is map && d.payload.status in ['draft','done'] && (
+        (d.type == 'periodo' && d.payload.keys().hasAll(["programStart","reviewedBy","evidence","status"]) && d.payload.keys().hasOnly(["programStart","reviewedBy","evidence","status"])
+          && d.payload.programStart is string && d.payload.programStart.size() <= 3000
+          && d.payload.reviewedBy is string && d.payload.reviewedBy.size() <= 3000
+          && d.payload.evidence is string && d.payload.evidence.size() <= 3000
+          && d.id == 'cp_periodo_2026' && d.payload.programStart.matches('[0-9]{4}-[0-9]{2}-[0-9]{2}') && d.payload.reviewedBy.size() > 0 && d.payload.evidence.size() > 0
+          && (d.payload.status != 'done' || (d.payload.programStart.size() > 0 && d.payload.reviewedBy.size() > 0 && d.payload.evidence.size() > 0))) ||
+        (d.type == 'calibracion' && d.payload.keys().hasAll(["date","minutes","sample","spec","lead","shiftLead","reference","tolerance","validatedBy","agreements","evidence","status"]) && d.payload.keys().hasOnly(["date","minutes","sample","spec","lead","shiftLead","reference","tolerance","validatedBy","agreements","evidence","status"])
+          && d.payload.date is string && d.payload.date.size() <= 3000
+          && d.payload.minutes is string && d.payload.minutes.size() <= 3000
+          && d.payload.sample is string && d.payload.sample.size() <= 3000
+          && d.payload.spec is string && d.payload.spec.size() <= 3000
+          && d.payload.lead is string && d.payload.lead.size() <= 3000
+          && d.payload.shiftLead is string && d.payload.shiftLead.size() <= 3000
+          && d.payload.reference is string && d.payload.reference.size() <= 3000
+          && d.payload.tolerance is string && d.payload.tolerance.size() <= 3000
+          && d.payload.validatedBy is string && d.payload.validatedBy.size() <= 3000
+          && d.payload.agreements is string && d.payload.agreements.size() <= 3000
+          && d.payload.evidence is string && d.payload.evidence.size() <= 3000
+          && (d.payload.status != 'done' || (d.payload.date.size() > 0 && d.payload.minutes.size() > 0 && d.payload.sample.size() > 0 && d.payload.spec.size() > 0 && d.payload.lead.size() > 0 && d.payload.shiftLead.size() > 0 && d.payload.reference.size() > 0 && d.payload.tolerance.size() > 0 && d.payload.validatedBy.size() > 0 && d.payload.agreements.size() > 0 && d.payload.evidence.size() > 0))) ||
+        (d.type == 'resultado' && d.payload.keys().hasAll(["calibrationId","personId","attendance","talla","cuenta","uniformidad","defectos","decision","discrepancy","reinforcement","recheck","concordant","evidence","status"]) && d.payload.keys().hasOnly(["calibrationId","personId","attendance","talla","cuenta","uniformidad","defectos","decision","discrepancy","reinforcement","recheck","concordant","evidence","status"])
+          && d.payload.calibrationId is string && d.payload.calibrationId.size() <= 3000
+          && d.payload.personId is string && d.payload.personId.size() <= 3000
+          && d.payload.attendance is string && d.payload.attendance.size() <= 3000
+          && d.payload.talla is string && d.payload.talla.size() <= 3000
+          && d.payload.cuenta is string && d.payload.cuenta.size() <= 3000
+          && d.payload.uniformidad is string && d.payload.uniformidad.size() <= 3000
+          && d.payload.defectos is string && d.payload.defectos.size() <= 3000
+          && d.payload.decision is string && d.payload.decision.size() <= 3000
+          && d.payload.discrepancy is string && d.payload.discrepancy.size() <= 3000
+          && d.payload.reinforcement is string && d.payload.reinforcement.size() <= 3000
+          && d.payload.recheck is string && d.payload.recheck.size() <= 3000
+          && d.payload.concordant is string && d.payload.concordant.size() <= 3000
+          && d.payload.evidence is string && d.payload.evidence.size() <= 3000
+          && capParticipantActive(d.payload.personId)
+          && d.id == 'cp_res_' + d.payload.calibrationId + '_' + d.payload.personId
+          && get(/databases/$(database)/documents/expalsa_capacitacion_2026_complementos/$(d.payload.calibrationId)).data.type == 'calibracion'
+          && d.payload.attendance in ['','asistio','no_asistio','reprogramado'] && d.payload.concordant in ['','si','no']
+          && d.payload.decision in ['','aceptar','rechazar']
+          && (d.payload.status != 'done' || (d.payload.attendance == 'asistio' && d.payload.concordant == 'si'
+            && get(/databases/$(database)/documents/expalsa_capacitacion_2026_complementos/$(d.payload.calibrationId)).data.payload.status == 'done'
+            && (d.payload.discrepancy == '' || (d.payload.reinforcement.size() > 0 && d.payload.recheck.size() > 0))))
+          && (d.payload.status != 'done' || (d.payload.calibrationId.size() > 0 && d.payload.personId.size() > 0 && d.payload.attendance.size() > 0 && d.payload.talla.size() > 0 && d.payload.cuenta.size() > 0 && d.payload.uniformidad.size() > 0 && d.payload.defectos.size() > 0 && d.payload.decision.size() > 0 && d.payload.concordant.size() > 0 && d.payload.evidence.size() > 0))) ||
+        (d.type == 'reclamo' && d.payload.keys().hasAll(["code","date","product","deviation","requirement","cause","control","action","topic","competency","day","priority","rationale","evidence","status"]) && d.payload.keys().hasOnly(["code","date","product","deviation","requirement","cause","control","action","topic","competency","day","priority","rationale","evidence","status"])
+          && d.payload.code is string && d.payload.code.size() <= 3000
+          && d.payload.date is string && d.payload.date.size() <= 3000
+          && d.payload.product is string && d.payload.product.size() <= 3000
+          && d.payload.deviation is string && d.payload.deviation.size() <= 3000
+          && d.payload.requirement is string && d.payload.requirement.size() <= 3000
+          && d.payload.cause is string && d.payload.cause.size() <= 3000
+          && d.payload.control is string && d.payload.control.size() <= 3000
+          && d.payload.action is string && d.payload.action.size() <= 3000
+          && d.payload.topic is string && d.payload.topic.size() <= 3000
+          && d.payload.competency is string && d.payload.competency.size() <= 3000
+          && d.payload.day is string && d.payload.day.size() <= 3000
+          && d.payload.priority is string && d.payload.priority.size() <= 3000
+          && d.payload.rationale is string && d.payload.rationale.size() <= 3000
+          && d.payload.evidence is string && d.payload.evidence.size() <= 3000
+          && exists(/databases/$(database)/documents/expalsa_capacitacion_2026_complementos/cp_periodo_2026)
+          && d.payload.day in ['','2','3','4','5','6','8','9'] && d.payload.priority in ['','alta','media','baja']
+          && (d.payload.status != 'done' || (d.payload.code.size() > 0 && d.payload.date.size() > 0 && d.payload.product.size() > 0 && d.payload.deviation.size() > 0 && d.payload.requirement.size() > 0 && d.payload.cause.size() > 0 && d.payload.control.size() > 0 && d.payload.action.size() > 0 && d.payload.topic.size() > 0 && d.payload.competency.size() > 0 && d.payload.day.size() > 0 && d.payload.priority.size() > 0 && d.payload.rationale.size() > 0 && d.payload.evidence.size() > 0))) ||
+        (d.type == 'aprendizaje' && d.payload.keys().hasAll(["caseId","personId","date","explanation","requirement","detection","containment","communication","verification","result","reinforcement","resolved","evidence","status"]) && d.payload.keys().hasOnly(["caseId","personId","date","explanation","requirement","detection","containment","communication","verification","result","reinforcement","resolved","evidence","status"])
+          && d.payload.caseId is string && d.payload.caseId.size() <= 3000
+          && d.payload.personId is string && d.payload.personId.size() <= 3000
+          && d.payload.date is string && d.payload.date.size() <= 3000
+          && d.payload.explanation is string && d.payload.explanation.size() <= 3000
+          && d.payload.requirement is string && d.payload.requirement.size() <= 3000
+          && d.payload.detection is string && d.payload.detection.size() <= 3000
+          && d.payload.containment is string && d.payload.containment.size() <= 3000
+          && d.payload.communication is string && d.payload.communication.size() <= 3000
+          && d.payload.verification is string && d.payload.verification.size() <= 3000
+          && d.payload.result is string && d.payload.result.size() <= 3000
+          && d.payload.reinforcement is string && d.payload.reinforcement.size() <= 3000
+          && d.payload.resolved is string && d.payload.resolved.size() <= 3000
+          && d.payload.evidence is string && d.payload.evidence.size() <= 3000
+          && capParticipantActive(d.payload.personId)
+          && d.id == 'cp_apr_' + d.payload.caseId + '_' + d.payload.personId
+          && get(/databases/$(database)/documents/expalsa_capacitacion_2026_complementos/$(d.payload.caseId)).data.type == 'reclamo'
+          && d.payload.result in ['','demostrado','refuerzo'] && d.payload.resolved in ['','si','no']
+          && (d.payload.status != 'done' || (d.payload.result == 'demostrado' && (d.payload.reinforcement == '' || d.payload.resolved == 'si')))
+          && (d.payload.status != 'done' || (d.payload.caseId.size() > 0 && d.payload.personId.size() > 0 && d.payload.date.size() > 0 && d.payload.explanation.size() > 0 && d.payload.requirement.size() > 0 && d.payload.detection.size() > 0 && d.payload.containment.size() > 0 && d.payload.communication.size() > 0 && d.payload.verification.size() > 0 && d.payload.result.size() > 0 && d.payload.resolved.size() > 0 && d.payload.evidence.size() > 0)))
+      );
+    }
+    function capComplementValid(d, id) {
+      return expalsaAdmin()
+        && d.keys().hasAll(['id','type','payload','rev','createdAt','updatedAt','updatedBy'])
+        && d.keys().hasOnly(['id','type','payload','rev','createdAt','updatedAt','updatedBy'])
+        && d.id == id && id.matches('cp_[A-Za-z0-9_]{8,200}')
+        && d.rev is int && d.rev >= 1
+        && d.createdAt is timestamp && d.updatedAt == request.time && d.updatedBy == request.auth.uid
+        && capComplementPayload(d);
+    }
+    match /expalsa_capacitacion_2026_complementos/{id} {
+      allow get, list: if expalsaAdmin();
+      allow create: if capComplementValid(request.resource.data, id)
+        && request.resource.data.rev == 1 && request.resource.data.createdAt == request.time;
+      allow update: if capComplementValid(request.resource.data, id)
+        && request.resource.data.id == resource.data.id && request.resource.data.type == resource.data.type
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.rev == resource.data.rev + 1;
+      allow delete: if false;
+    }
+
+    // Responsable del equipo actual: nombre y fotografia opcional, solo administrador.
+    // No altera participantes, dias, horas ni resultados de capacitacion.
+    function capResponsibleValid(d) {
+      return expalsaAdmin()
+        && d.keys().hasAll(['name','jpeg','rev','createdAt','updatedAt','updatedBy'])
+        && d.keys().hasOnly(['name','jpeg','rev','createdAt','updatedAt','updatedBy'])
+        && d.name is string && d.name.size() >= 2 && d.name.size() <= 100
+        && d.jpeg is string && d.jpeg.size() <= 170000
+        && (d.jpeg == '' || d.jpeg.matches('^data:image/jpeg;base64,[A-Za-z0-9+/=]+$'))
+        && d.rev is int && d.rev >= 1 && d.createdAt is timestamp
+        && d.updatedAt == request.time && d.updatedBy == request.auth.uid;
+    }
+    match /expalsa_capacitacion_2026_equipo/{recordId} {
+      allow get: if expalsaAdmin() && recordId == 'responsable';
+      allow list, delete: if false;
+      allow create: if recordId == 'responsable' && capResponsibleValid(request.resource.data)
+        && request.resource.data.rev == 1 && request.resource.data.createdAt == request.time;
+      allow update: if recordId == 'responsable' && capResponsibleValid(request.resource.data)
+        && request.resource.data.rev == resource.data.rev + 1
+        && request.resource.data.createdAt == resource.data.createdAt;
+    }
+    // Evaluacion propia del plan 2026. Banco privado e inmutable desde el cliente.
+    // Intentos: identidad/alcance/banco/inicio inmutables. Respuestas JSON <=60000.
+    // Marcas JSON <=1500, revision incremental, entrega y calificacion irreversibles.
+    match /expalsa_capacitacion_2026_bancos/{version} {
+      allow get: if expalsaAdmin();
+      allow list, create, update, delete: if false;
+    }
+    function capExamValid(d,id) {
+      return expalsaAdmin()
+        && d.keys().hasAll(['id','accountUid','scope','purpose','durationMinutes','bankId','status','answers','marks','startedAt','createdAt','updatedAt','submittedAt','gradedAt','submissionKind','createdBy','updatedBy','rev'])
+        && d.keys().hasOnly(['id','accountUid','scope','purpose','durationMinutes','bankId','status','answers','marks','startedAt','createdAt','updatedAt','submittedAt','gradedAt','submissionKind','createdBy','updatedBy','rev'])
+        && d.id==id && id.matches('^[A-Za-z0-9]{20}$')
+        && d.accountUid is string && d.accountUid.size()>0 && d.accountUid.size()<=128
+        && d.scope is int && d.scope>=0 && d.scope<=10
+        && d.purpose in ['inicial','final','refuerzo']
+        && d.durationMinutes is int && d.durationMinutes>=5 && d.durationMinutes<=180
+        && d.bankId=='cap-plan-20261103-v1'
+        && exists(/databases/$(database)/documents/expalsa_capacitacion_2026_bancos/$(d.bankId))
+        && d.status in ['active','submitted','graded']
+        && d.answers is string && d.answers.size()>=2 && d.answers.size()<=60000
+        && d.marks is string && d.marks.size()>=2 && d.marks.size()<=1500
+        && d.startedAt is timestamp && d.createdAt is timestamp && d.updatedAt==request.time
+        && d.createdBy is string && d.createdBy.size()>0 && d.createdBy.size()<=128
+        && d.updatedBy==request.auth.uid && d.rev is int && d.rev>=1
+        && ((d.status=='active' && d.submittedAt==null && d.gradedAt==null && d.submissionKind=='' && d.marks=='{}') ||
+          (d.status in ['submitted','graded'] && d.submittedAt is timestamp && d.submissionKind in ['manual','expired'] &&
+          ((d.status=='submitted' && d.gradedAt==null && d.marks=='{}') || (d.status=='graded' && d.gradedAt is timestamp))));
+    }
+    function capExamIdentityStable(d,a) {
+      return d.id==a.id && d.accountUid==a.accountUid && d.scope==a.scope && d.purpose==a.purpose
+        && d.durationMinutes==a.durationMinutes && d.bankId==a.bankId && d.startedAt==a.startedAt
+        && d.createdAt==a.createdAt && d.createdBy==a.createdBy && d.rev==a.rev+1;
+    }
+    function capExamUpdate(d,a) {
+      let deadline=a.startedAt+duration.value(a.durationMinutes*60,'s');
+      return capExamIdentityStable(d,a) && (
+        (a.status=='active' && d.status=='active' && request.time<deadline
+          && d.diff(a).affectedKeys().hasOnly(['answers','rev','updatedAt','updatedBy'])) ||
+        (a.status=='active' && d.status=='submitted' && d.answers==a.answers && d.submittedAt==request.time
+          && (d.submissionKind=='expired'?request.time>=deadline:request.time<deadline)
+          && d.diff(a).affectedKeys().hasOnly(['status','submittedAt','submissionKind','rev','updatedAt','updatedBy'])) ||
+        (a.status=='submitted' && d.status=='graded' && d.answers==a.answers && d.submittedAt==a.submittedAt && d.submissionKind==a.submissionKind
+          && d.gradedAt==request.time
+          && d.diff(a).affectedKeys().hasOnly(['status','marks','gradedAt','rev','updatedAt','updatedBy']))
+      );
+    }
+    match /expalsa_capacitacion_2026_evaluaciones/{id} {
+      allow get, list: if expalsaAdmin();
+      allow create: if capExamValid(request.resource.data,id)
+        && request.resource.data.rev==1 && request.resource.data.status=='active'
+        && request.resource.data.answers=='{}' && request.resource.data.marks=='{}'
+        && request.resource.data.startedAt==request.time && request.resource.data.createdAt==request.time
+        && request.resource.data.createdBy==request.auth.uid
+        && exists(accessDoc(request.resource.data.accountUid))
+        && get(accessDoc(request.resource.data.accountUid)).data.active==true
+        && get(accessDoc(request.resource.data.accountUid)).data.get('deleted',false)!=true;
+      allow update: if capExamValid(request.resource.data,id) && capExamUpdate(request.resource.data,resource.data);
+      allow delete: if false;
+    }
+
+    // Mapa de calidad y sabor: isolated from every other repository collection.
+    match /grados/{id} {
+      allow get, list: if calidadPageUser();
+      allow create, update: if calidadPageUser() && calidadPageAdmin() && validCalidadGrade(request.resource.data);
+      allow delete: if calidadPageUser() && calidadPageAdmin();
+    }
+    match /destinos/{id} {
+      allow get, list: if calidadPageUser();
+      allow create, update: if calidadPageUser() && calidadPageAdmin() && validCalidadDestination(request.resource.data);
+      allow delete: if calidadPageUser() && calidadPageAdmin();
+    }
+    match /clientes_calidad/{clientId} {
+      allow get, list: if calidadPageUser();
+      allow create, update: if calidadPageUser() && calidadPageAdmin() && validCalidadClient(request.resource.data);
+      allow delete: if calidadPageUser() && calidadPageAdmin();
+    }
+    match /fichas_tecnicas_calidad/{id} {
+      allow get, list: if calidadPageUser();
+      allow create, update: if calidadPageUser() && calidadPageAdmin() && validFichaTecnica(request.resource.data, id);
+      allow delete: if calidadPageUser() && calidadPageAdmin();
+    }
+
+
+    // Inspection module: shared, numbered runs; append-only correction history.
+    function expalsaInspectionAdmin() {
+      return expalsaAdmin() || calidadTrustedAdmin();
+    }
+    function expalsaInspectionUser() { return expalsaInspectionAdmin() || inspector(); }
+    function expalsaInspectionPhotoValid(photo) {
+      return photo is map && photo.uploadedBy == request.auth.uid;
+    }
+    function inspectionRunPath(id) { return /databases/$(database)/documents/expalsa_calidad_inspecciones_runs/$(id); }
+    function inspectionRecordPath(id) { return /databases/$(database)/documents/expalsa_calidad_inspecciones/$(id); }
+    function correctiveActionPath(id) { return /databases/$(database)/documents/expalsa_calidad_acciones_correctivas/$(id); }
+    function inspectionRunOpen(id, number) {
+      let run = get(inspectionRunPath(id)).data;
+      return run.status == 'en_curso'
+        && run.inspectionNumber == number;
+    }
+    function correctionMatchesAfter(id, d) {
+      let actionId = d.get('lastCorrectionId','');
+      let action = getAfter(correctiveActionPath(actionId)).data;
+      return action.observationId == id
+        && action.newStatus == d.status && action.previousStatus == resource.data.status
+        && action.byUid == request.auth.uid;
+    }
+    function validCorrectiveAction(d, id) {
+      let observation = get(inspectionRecordPath(d.observationId)).data;
+      let updated = getAfter(inspectionRecordPath(d.observationId)).data;
+      return d.observationId is string && d.byUid == request.auth.uid
+        && d.createdAt == request.time && d.previousStatus == observation.status
+        && d.previousStatus in ['no_cumple','parcial'] && d.newStatus in ['cumple','parcial'] && d.newStatus != d.previousStatus
+        && d.note is string && d.note.size() > 0 && d.photos is list && d.photos.size() > 0
+        && expalsaInspectionPhotoValid(d.photos[0]) && updated.lastCorrectionId == id;
+    }
+    match /expalsa_calidad_inspecciones_runs/{id} {
+      allow get, list: if expalsaInspectionUser();
+      allow create: if expalsaInspectionUser() && id.size() == 20
+        && request.resource.data.openedByUid == request.auth.uid && request.resource.data.openedByEmail == request.auth.token.email
+        && request.resource.data.createdBy == request.auth.uid && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedBy == request.auth.uid && request.resource.data.updatedAt == request.time
+        && request.resource.data.status == 'en_curso' && request.resource.data.participants is list;
+      allow update: if expalsaInspectionUser()
+        && request.resource.data.createdBy == resource.data.createdBy && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.openedByUid == resource.data.openedByUid && request.resource.data.openedByEmail == resource.data.openedByEmail
+        && request.resource.data.inspectionNumber == resource.data.inspectionNumber && request.resource.data.inspectedAt == resource.data.inspectedAt
+        && resource.data.status == 'en_curso'
+        && (request.resource.data.status == 'en_curso' || (request.resource.data.status == 'terminada' && request.resource.data.closedAt == request.time && request.resource.data.closedByUid == request.auth.uid))
+        && request.resource.data.participants is list && request.resource.data.participants.size() <= 30
+        && request.resource.data.updatedBy == request.auth.uid && request.resource.data.updatedAt == request.time
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['participants','status','closedAt','closedByUid','closedByName','updatedBy','updatedByName','updatedAt']);
+      allow delete: if expalsaInspectionAdmin();
+    }
+    match /expalsa_calidad_inspecciones/{id} {
+      allow get, list: if expalsaInspectionUser();
+      allow create: if expalsaInspectionUser() && id.size() == 20
+        && request.resource.data.area in ['PLANTA','EXTERIORES','BODEGAS','DESECHOS','DESPACHO','SILO DE HIELO','OTROS']
+        && request.resource.data.status in ['cumple','no_cumple','parcial','nueva']
+        && request.resource.data.photos is list && request.resource.data.photos.size() <= 6
+        && request.resource.data.createdBy == request.auth.uid && request.resource.data.inspectorUid == request.auth.uid
+        && request.resource.data.inspectorEmail == request.auth.token.email && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedBy == request.auth.uid && request.resource.data.updatedAt == request.time
+        && inspectionRunOpen(request.resource.data.inspectionId, request.resource.data.inspectionNumber);
+      allow update: if expalsaInspectionUser()
+        && request.resource.data.createdBy == resource.data.createdBy
+        && request.resource.data.createdAt == resource.data.createdAt && request.resource.data.inspectorUid == resource.data.inspectorUid
+        && request.resource.data.inspectorEmail == resource.data.inspectorEmail && request.resource.data.inspectorName == resource.data.inspectorName
+        && request.resource.data.get('inspectionId','') == resource.data.get('inspectionId','') && request.resource.data.get('inspectionNumber','') == resource.data.get('inspectionNumber','')
+        && request.resource.data.updatedBy == request.auth.uid && request.resource.data.updatedAt == request.time
+        && ((request.resource.data.status == resource.data.status && resource.data.get('inspectionId','') != '' && inspectionRunOpen(resource.data.inspectionId, resource.data.inspectionNumber)
+          && request.resource.data.photos is list && request.resource.data.photos.size() <= 6
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['location','description','department','notificationDate','notes','photos','updatedBy','updatedByName','updatedAt']))
+          || (request.resource.data.status != resource.data.status && correctionMatchesAfter(id, request.resource.data)
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','lastCorrectionId','lastCorrectionNote','updatedBy','updatedByName','updatedAt'])));
+      allow delete: if expalsaInspectionAdmin();
+    }
+    match /expalsa_calidad_acciones_correctivas/{id} {
+      allow get, list: if expalsaInspectionUser();
+      allow create: if expalsaInspectionUser() && validCorrectiveAction(request.resource.data, id);
+      allow update: if false;
+      allow delete: if expalsaInspectionAdmin();
+    }
+    match /expalsa_calidad_inspecciones_progreso/{id} {
+      allow get, list: if expalsaInspectionUser();
+      allow create, update: if expalsaInspectionUser()
+        && request.resource.data.savedByUid == request.auth.uid
+        && inspectionRunOpen(request.resource.data.inspectionId, request.resource.data.inspectionNumber);
+      allow delete: if expalsaInspectionAdmin();
+    }
+
+    // Distribución diaria del personal de Calidad en Planta.
+    // Las tres cuentas comparten las funciones de distribución y la tabla de inspectores.
+    // Las cuentas operativas solo leen sus propios registros; Jefferson puede leerlos todos.
+    function distributionUser() {
+      return expalsaAdmin() || (signedIn() && request.auth.uid in [
+        'rrYYikodW6cZbt8wsKzwcRGhOZ73',
+        'NvbcodzylQPi2P8Y1stcJEq0ETi1'
+      ]);
+    }
+    function validDistributionInspector(id,d) {
+      return distributionUser() && id.size() == 20
+        && d.keys().hasAll(['name','active','createdAt','createdBy','updatedAt','updatedBy','revision'])
+        && d.keys().hasOnly(['name','active','createdAt','createdBy','updatedAt','updatedBy','revision'])
+        && d.name is string && d.name.matches('.*\\S.*') && d.name.size() >= 2 && d.name.size() <= 120
+        && d.active is bool && d.createdAt is timestamp && d.createdBy is string && d.createdBy.size() > 0 && d.createdBy.size() <= 128
+        && d.updatedAt == request.time && d.updatedBy == request.auth.uid
+        && d.revision is int && d.revision >= 1;
+    }
+    match /expalsa_calidad_distribucion_inspectores/{id} {
+      allow get, list: if distributionUser();
+      allow create: if validDistributionInspector(id,request.resource.data)
+        && request.resource.data.revision == 1 && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.createdAt == request.time;
+      allow update: if validDistributionInspector(id,request.resource.data)
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.createdBy == resource.data.createdBy
+        && request.resource.data.revision == resource.data.revision + 1;
+      allow delete: if false;
+    }
+    function distributionSlots() {
+      return ['shiftDavid','shiftAngelo','noRota','receptionDigitacion','receptionMuestreo','receptionOrganolepticos','receptionValoracion','receptionSulfitos',
+        'machine2','machine5','machine6','machine7','machine8','machine9','machine10','avanceDescabezado','avanceValorAgregado',
+        'freezeEspiral','freezeCiclon','freezeTornado','freezeBrine12','freezeBrine345','freezeBrine6','inspectionDefrosted',
+        'storageGrossWeight','storageTemperature','storagePreboxes1','storagePreboxes2','storageWarehouse','exportShipment','exportRepack',
+        'faltas','iess','vacaciones','sinFuncion','asistencias','ausencias','nomina'];
+    }
+    function distributionText(d,key,maxLength) {
+      return d.assignments.get(key,'') is string && d.assignments.get(key,'').size() <= maxLength;
+    }
+    function distributionDataValid(id,d) {
+      return distributionUser()
+        && d.keys().hasAll(['date','assignments','entryReview','teamNotes','completedChecks','createdAt','createdBy','updatedAt','updatedBy','revision'])
+        && d.keys().hasOnly(['date','assignments','entryReview','teamNotes','completedChecks','createdAt','createdBy','updatedAt','updatedBy','revision'])
+        && d.date is string && d.date.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+        && d.createdBy is string && d.createdBy.size() > 0 && d.createdBy.size() <= 128
+        && (id == d.date || id == d.date+'__'+d.createdBy)
+        && d.assignments is map && d.assignments.keys().hasAll(distributionSlots())
+        && d.assignments.keys().hasOnly(distributionSlots()) && d.assignments.keys().size() == distributionSlots().size()
+        && distributionText(d,'shiftDavid',4000) && distributionText(d,'shiftAngelo',4000) && distributionText(d,'noRota',4000)
+        && distributionText(d,'receptionDigitacion',4000) && distributionText(d,'receptionMuestreo',4000)
+        && distributionText(d,'receptionOrganolepticos',4000) && distributionText(d,'receptionValoracion',4000)
+        && distributionText(d,'receptionSulfitos',4000) && distributionText(d,'machine2',4000)
+        && distributionText(d,'machine5',4000) && distributionText(d,'machine6',4000) && distributionText(d,'machine7',4000)
+        && distributionText(d,'machine8',4000) && distributionText(d,'machine9',4000) && distributionText(d,'machine10',4000)
+        && distributionText(d,'avanceDescabezado',4000) && distributionText(d,'avanceValorAgregado',4000)
+        && distributionText(d,'freezeEspiral',4000) && distributionText(d,'freezeCiclon',4000)
+        && distributionText(d,'freezeTornado',4000) && distributionText(d,'freezeBrine12',4000)
+        && distributionText(d,'freezeBrine345',4000) && distributionText(d,'freezeBrine6',4000)
+        && distributionText(d,'inspectionDefrosted',4000) && distributionText(d,'storageGrossWeight',4000)
+        && distributionText(d,'storageTemperature',4000) && distributionText(d,'storagePreboxes1',4000)
+        && distributionText(d,'storagePreboxes2',4000) && distributionText(d,'storageWarehouse',4000)
+        && distributionText(d,'exportShipment',4000) && distributionText(d,'exportRepack',4000)
+        && distributionText(d,'faltas',4000) && distributionText(d,'iess',4000) && distributionText(d,'vacaciones',4000)
+        && distributionText(d,'sinFuncion',4000) && distributionText(d,'asistencias',4000)
+        && distributionText(d,'ausencias',4000) && distributionText(d,'nomina',4000)
+        && d.entryReview is string && d.entryReview.size() <= 2000
+        && d.teamNotes is string && d.teamNotes.size() <= 3000
+        && d.completedChecks is list && d.completedChecks.size() <= 6
+        && d.completedChecks.hasOnly(['Revisar órdenes de producción','Revisar residuales','Verificar proveedores autorizados para empaques','Subir reporte de limpieza','Subir reporte de BPM','Subir reporte de balanzas'])
+        && d.createdAt is timestamp
+        && d.updatedAt == request.time && d.updatedBy == request.auth.uid
+        && d.revision is int && d.revision >= 1;
+    }
+    match /expalsa_calidad_distribuciones/{id} {
+      allow get: if distributionUser() && (expalsaAdmin() ||
+        id.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}__'+request.auth.uid+'$') ||
+        resource.data.createdBy == request.auth.uid);
+      allow list: if distributionUser() && (expalsaAdmin() || resource.data.createdBy == request.auth.uid);
+      allow create: if distributionUser() && distributionDataValid(id,request.resource.data)
+        && request.resource.data.createdBy == request.auth.uid
+        && id == request.resource.data.date+'__'+request.auth.uid
+        && request.resource.data.revision == 1
+        && request.resource.data.createdAt == request.time;
+      allow update: if distributionUser() && distributionDataValid(id,request.resource.data)
+        && (expalsaAdmin()
+          ? request.resource.data.createdBy == resource.data.createdBy
+            && request.resource.data.createdAt == resource.data.createdAt
+            && request.resource.data.revision == resource.data.revision + 1
+          : id == request.resource.data.date+'__'+request.auth.uid
+            && request.resource.data.createdBy == request.auth.uid);
+      allow delete: if false;
+    }
+
+  }
+}
+
