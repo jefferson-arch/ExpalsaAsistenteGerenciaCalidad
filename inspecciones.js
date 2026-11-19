@@ -3,7 +3,8 @@ const RUNS = 'expalsa_calidad_inspecciones_runs';
 const CORRECTIONS = 'expalsa_calidad_acciones_correctivas';
 const PROGRESS = 'expalsa_calidad_inspecciones_progreso';
 const AREAS = ['PLANTA', 'EXTERIORES', 'BODEGAS', 'DESECHOS', 'DESPACHO', 'SILO DE HIELO', 'OTROS'];
-const STATUS = { cumple: 'Cumple', no_cumple: 'No cumple', parcial: 'Parcial', nueva: 'Nueva observación' };
+const STATUS = { cumple: 'Cerrado', no_cumple: 'Abierto', parcial: 'En curso', nueva: 'Nueva observación' };
+const DEFAULT_COMPLIANCE_DAYS = { no_cumple: 180, parcial: 120, nueva: 90 };
 const LOCATIONS = {
   PLANTA: ['Vestidores / Ingreso a Planta', 'Recepción', 'Recepción de Materia Prima', 'Recepción, Tolva #5', 'Descabezado', 'Descabezado (Planta baja)', 'Lavado de Materiales', 'Lavado de gavetas y canastillas', 'Pre-cajas 2', 'Precajas #1', 'Máquina 2', 'Máquina 5', 'Máquina 5, 7 y 9', 'Máquina 7', 'Máquina 7 y 9', 'Máquina 9', 'Máquina 10', 'Máquinas 10', 'Máquinas 6, 8 y 2', 'Máquinas 6, 8, 2 y 10', 'Máquinas 7, 5 y 9', 'Brine #1 y 2', 'Brine 3, 4 y 5', 'Brine 4', 'Cuarto de salmuera Brine #1 y 2', 'Cuarto de salmuera Brine 3-4-5', 'Cámaras 1, 2 y 3', 'Cámaras 4, 5 y 6', 'Pasillo de los túneles', 'Puesto de supervisor de túneles', 'Precámara', 'Decorado'],
   EXTERIORES: ['Comedor', 'Lavandería', 'Baños del personal', 'Baños', 'Baño de mujeres', 'Baño de mujeres de máquinas clasificadora', 'Baño de mujeres de supervisoras', 'Baño de hombres', 'Baño de hombres de mantenimiento', 'Baño de mantenimiento', 'Exteriores'],
@@ -14,23 +15,69 @@ const LOCATIONS = {
   OTROS: ['Laboratorio de recepción', 'Servicios generales', 'Planta de agua', 'Otra área']
 };
 let demoRecordsPromise;
-const SECTIONS = [
+const BASE_SECTIONS = [
   { id: 'Inicio', icon: '⌂', title: 'Inicio', description: 'Resumen de hallazgos y acciones de inspección.' },
-  { id: 'Alertas', icon: '⚑', title: 'Alertas', description: 'Seguimiento prioritario de incumplimientos y observaciones parciales.' },
-  ...AREAS.map(area => ({ id: area, icon: ({ PLANTA: '▦', EXTERIORES: '⌂', BODEGAS: '▤', DESECHOS: '♲', DESPACHO: '⇧', 'SILO DE HIELO': '❄', OTROS: '⋯' })[area], title: areaTitle(area), description: `Observaciones registradas en ${area.toLowerCase()}.` })),
+  { id: 'Alertas', icon: '⚑', title: 'Alertas', description: 'Seguimiento prioritario de hallazgos abiertos y en curso.' },
   { id: 'General', icon: '▧', title: 'General', description: 'Observaciones consolidadas de todas las instalaciones.' },
   { id: 'Historial', icon: '◷', title: 'Historial', description: 'Busca, filtra y revisa las inspecciones anteriores.' }
 ];
+const COMPLIANCE_SECTION = { id: 'Cumplimientos', icon: '◷', title: 'Cumplimientos', description: 'Plazos, vencimientos y efectividad de los departamentos responsables.' };
+const DEPARTMENT_ICON = '▦';
+const DEPARTMENT_NAMES = ['MANTENIMIENTO', 'PRODUCCIÓN', 'CALIDAD', 'SISTEMAS', 'DESPACHO Y LOGÍSTICA', 'SERVICIO GENERAL', 'BODEGA', 'RRHH', 'SEGURIDAD INDUSTRIAL', 'REFRIGERACIÓN'];
 
 const $ = id => document.getElementById(id);
 const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const dateLabel = value => value ? new Date(`${value}T12:00:00`).toLocaleDateString('es-EC', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
+const todayIso = () => { const date = new Date(); return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`; };
+function datePlusDays(value, days) {
+  if (!value || !Number.isFinite(days)) return '';
+  const date = new Date(`${value}T12:00:00Z`);
+  if (Number.isNaN(date.getTime())) return '';
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+function defaultComplianceDueDate(status, startDate) {
+  const days = DEFAULT_COMPLIANCE_DAYS[status];
+  return days ? datePlusDays(startDate, days) : '';
+}
+function updateDefaultDeadline(force = false) {
+  const form = $('inspectionForm');
+  const dueField = form.elements.complianceDueDate;
+  if (dueField.disabled) return;
+  if (!force && !dueField.dataset.autoDefault) return;
+  const status = form.elements.status.value;
+  const startDate = form.elements.notificationDate.value || form.elements.inspectedAt.value;
+  const value = defaultComplianceDueDate(status, startDate);
+  dueField.value = value;
+  dueField.dataset.autoDefault = value ? 'true' : '';
+  $('complianceDueDateHint').textContent = value
+    ? `Plazo predeterminado de ${DEFAULT_COMPLIANCE_DAYS[status]} días desde la fecha de notificación (editable).`
+    : 'Opcional; necesaria para medir el plazo y la efectividad.';
+}
+const dateDelta = (from, to) => from && to ? Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86400000) : null;
 const elapsedDays = value => value ? Math.floor((Date.UTC(new Date().getFullYear(), new Date().getMonth(), new Date().getDate()) - Date.parse(`${value}T00:00:00Z`)) / 86400000) : '—';
-const daysOpen = row => Number.isFinite(row.daysOpenSnapshot) ? row.daysOpenSnapshot : elapsedDays(row.notificationDate);
-const state = { user: null, role: '', demo: false, tab: 'Inicio', selectedInspectionDate: null, selectedInspectionId: null, activeInspectionId: null, activeInspectionNumber: null, records: [], inspectionRuns: [], corrections: [], progress: {}, unsubscribe: null, pendingPhotos: [], editingPhotos: [], correctionPhotos: [], correctingObservationId: null, viewingPhoto: null, toastTimer: null };
+const daysOpen = row => elapsedDays(row.notificationDate || row.inspectedAt);
+function inferImportance(row = {}) {
+  const text = `${row.description || ''} ${row.notes || ''} ${row.location || ''}`.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('es');
+  if (/cable|electri|gote|filtraci|fuga|plaga|cucaracha|roedor|vidrio|emergencia|incendio|contamin|riesgo|sin base|producto.{0,40}(direct|sin proteccion|desproteg|expuesto|piso|suelo)|direct.{0,25}producto|sin proteccion|sin film|tornillo.{0,30}expuesto|hueco.{0,35}(suelo|piso)|acumulacion.{0,30}desecho|pallet.{0,25}madera|madera.{0,30}(area|producto)|maquina.{0,50}desplazamiento|improvisad.{0,30}movimiento|desprendimiento de concreto/.test(text)) return 'alta';
+  if (/suci|limpieza|sarro|moho|condens|oxido|oxidaci|desprend|danad|deterior|malla|tapa|ilumin|lampara|puerta|ventil|grieta|pintura|rotul|corrosion|contacto|cortina|mal estado|banda|canast|pedal|pared.{0,30}dan|esquinero|escarcha|abertura|desactualizad|proteccion/.test(text)) return 'media';
+  return 'baja';
+}
+const importanceOf = row => ['alta', 'media', 'baja'].includes(row?.importance) ? row.importance : inferImportance(row);
+const importanceLabel = value => ({ alta: 'Alta', media: 'Media', baja: 'Baja' })[value] || 'Baja';
+function alertPriority(row) {
+  const severity = { baja: 1, media: 2, alta: 3 }[importanceOf(row)] || 1;
+  const age = Math.max(0, Number(daysOpen(row)) || 0);
+  const ageFactor = age >= 180 ? 3 : age >= 90 ? 2 : age >= 30 ? 1 : 0;
+  const score = severity + ageFactor;
+  return severity === 3 || score >= 5 ? 'alta' : score >= 2 ? 'media' : 'baja';
+}
+const priorityOrder = { alta: 3, media: 2, baja: 1 };
+const state = { user: null, role: '', demo: false, tab: 'Inicio', selectedInspectionDate: null, selectedInspectionId: null, activeInspectionId: null, activeInspectionNumber: null, records: [], inspectionRuns: [], corrections: [], progress: {}, unsubscribe: null, pendingPhotos: [], editingPhotos: [], correctionPhotos: [], correctingObservationId: null, viewingPhoto: null, pivotFilter: { status: '', area: '', departmentKey: '' }, complianceFilter: '', toastTimer: null };
 let firebaseApi;
 let inspectionModulesPromise;
 let pdfLibrariesPromise;
+let xlsxLibraryPromise;
 
 function syncOtherChoice(select, input) {
   const custom = select.value === '__other__';
@@ -41,13 +88,29 @@ function syncOtherChoice(select, input) {
 function fillLocationOptions(area, selected = '') {
   const select = $('locationSelect'), other = $('locationOther');
   const used = state.demo ? new Set() : new Set(state.records
-    .filter(row => row.area === area && normalizeLocation(row.location) !== normalizeLocation(selected))
+    .filter(row => row.area === area && row.inspectionId === state.activeInspectionId && normalizeLocation(row.location) !== normalizeLocation(selected))
     .map(row => normalizeLocation(row.location)));
   const options = (LOCATIONS[area] || LOCATIONS.OTROS).filter(value => !used.has(normalizeLocation(value)));
   select.replaceChildren(new Option(options.length ? 'Selecciona una ubicación disponible' : 'No hay ubicaciones disponibles; registra otra', ''), ...options.map(value => new Option(value, value)), new Option('Otra ubicación…', '__other__'));
   if (selected && !options.includes(selected)) { select.value = '__other__'; other.value = selected; }
   else { select.value = selected; other.value = ''; }
   syncOtherChoice(select, other);
+}
+
+function updateRecurrenceChoices() {
+  const form = $('inspectionForm'), area = form.elements.area.value;
+  const location = form.elements.location.value === '__other__' ? form.elements.locationOther.value.trim() : form.elements.location.value;
+  const department = form.elements.department.value === '__other__' ? form.elements.departmentOther.value.trim() : form.elements.department.value;
+  const selected = form.elements.reincidenceOf.value;
+  const departmentKeys = new Set(rowDepartments({ department }).map(item => item.key));
+  const candidates = state.records.filter(row => ['no_cumple', 'parcial'].includes(row.status) && row.complianceDueDate && complianceResult(row).kind === 'vencido'
+    && row.area === area && normalizeLocation(row.location) === normalizeLocation(location)
+    && (!departmentKeys.size || rowDepartments(row).some(item => departmentKeys.has(item.key))))
+    .sort((a, b) => (b.inspectedAt || '').localeCompare(a.inspectedAt || ''));
+  const field = $('recurrenceField'), select = $('reincidenceSelect');
+  field.hidden = !candidates.length;
+  select.replaceChildren(new Option('No es una reincidencia', ''), ...candidates.map(row => new Option(`${row.inspectionNumber || inspectionNumber(row.inspectedAt)} · ${dateLabel(row.inspectedAt)} · ${row.description.slice(0, 90)}`, row.id)));
+  if (candidates.some(row => row.id === selected)) select.value = selected;
 }
 
 function normalizeLocation(value) {
@@ -89,12 +152,100 @@ function setConnection(connected, label = '') {
 function drawNavigation() {
   $('sectionNav').className = 'side-nav';
   const alerts = state.records.filter(row => row.status === 'no_cumple' || row.status === 'parcial').length;
-  $('sectionNav').innerHTML = SECTIONS.map(item => `<button class="nav-button${state.tab === item.id ? ' active' : ''}" data-tab="${item.id}" type="button"><span class="nav-icon">${item.icon}</span><span>${item.title}</span>${item.id === 'Alertas' && alerts ? `<span class="nav-alert-count">${alerts}</span>` : ''}</button>`).join('');
+  const overdue = state.records.filter(row => ['no_cumple', 'parcial', 'nueva'].includes(row.status) && row.complianceDueDate && complianceResult(row).kind === 'vencido').length;
+  $('sectionNav').innerHTML = getSections().map(item => `<button class="nav-button${state.tab === item.id ? ' active' : ''}" data-tab="${escapeHtml(item.id)}" type="button"><span class="nav-icon">${item.icon}</span><span>${escapeHtml(item.title)}</span>${item.id === 'Alertas' && alerts ? `<span class="nav-alert-count">${alerts}</span>` : item.id === 'Cumplimientos' && overdue ? `<span class="nav-alert-count">${overdue}</span>` : item.departmentKey ? `<span class="nav-alert-count department-count">${state.records.filter(row => rowDepartments(row).some(department => department.key === item.departmentKey)).length}</span>` : ''}</button>`).join('');
+}
+
+function getSections() {
+  const departments = new Map();
+  for (const row of state.records) for (const department of rowDepartments(row)) {
+    if (!departments.has(department.key)) departments.set(department.key, department.name);
+  }
+  const cards = [...departments].sort((a, b) => a[1].localeCompare(b[1], 'es')).map(([key, name]) => {
+    const title = departmentTitle(name);
+    return { id: `Departamento:${key}`, departmentKey: key, icon: DEPARTMENT_ICON, title, description: `Hallazgos asignados al departamento ${title}.` };
+  });
+  return [...BASE_SECTIONS.slice(0, 2), COMPLIANCE_SECTION, ...cards, ...BASE_SECTIONS.slice(2)];
+}
+
+function complianceResult(row, today = todayIso()) {
+  if (!row.complianceDueDate) return { kind: 'sin_plazo', days: null };
+  const dueDate = row.complianceDueDate;
+  if (row.status === 'cumple') {
+    const completionAction = state.corrections.find(action => action.observationId === row.id && action.newStatus === 'cumple');
+    const completionValue = completionAction?.createdAt || completionAction?.actionDate || row.complianceCompletedAt;
+    const completedDate = completionValue?.toDate ? completionValue.toDate().toLocaleDateString('en-CA') : completionValue || row.inspectedAt || '';
+    const delta = dateDelta(dueDate, completedDate);
+    return { kind: delta !== null && delta <= 0 ? 'a_tiempo' : 'tarde', days: delta !== null && delta > 0 ? delta : 0, completedDate };
+  }
+  if (!['no_cumple', 'parcial', 'nueva'].includes(row.status)) return { kind: 'no_evaluable', days: null };
+  const remaining = dateDelta(today, dueDate);
+  return remaining < 0 ? { kind: 'vencido', days: -remaining } : { kind: remaining === 0 ? 'vence_hoy' : 'abierto', days: remaining };
+}
+
+const COMPLIANCE_FILTER_LABELS = {
+  con_plazo: 'Con plazo',
+  a_tiempo: 'Cerrados a tiempo',
+  abierto: 'Abiertos a tiempo',
+  vencido: 'Vencidos abiertos',
+  tarde: 'Cerrados tarde',
+  retraso: 'Retraso abierto (días)'
+};
+
+function complianceRowsForFilter(filter, today = todayIso()) {
+  const eligible = state.records.filter(row => row.complianceDueDate && ['no_cumple', 'parcial', 'nueva', 'cumple'].includes(row.status));
+  if (filter === 'con_plazo') return eligible.filter(row => complianceResult(row, today).kind !== 'vencido');
+  if (filter === 'a_tiempo') return eligible.filter(row => complianceResult(row, today).kind === 'a_tiempo');
+  if (filter === 'abierto') return eligible.filter(row => ['abierto', 'vence_hoy'].includes(complianceResult(row, today).kind));
+  if (filter === 'vencido' || filter === 'retraso') return eligible.filter(row => complianceResult(row, today).kind === 'vencido');
+  if (filter === 'tarde') return eligible.filter(row => complianceResult(row, today).kind === 'tarde');
+  return [];
+}
+
+function departmentTitle(value) {
+  return String(value || '').toLocaleLowerCase('es').split(' ').map((word, index) => {
+    if (word === 'rrhh') return 'RRHH';
+    if (index && ['y', 'de'].includes(word)) return word;
+    return word ? word[0].toLocaleUpperCase('es') + word.slice(1) : word;
+  }).join(' ');
+}
+
+function normalizeDepartment(value) {
+  return String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleUpperCase('es').replace(/MANTENIMIE\s*NTO/g, 'MANTENIMIENTO').replace(/SERVICIO\s+GENERALES/g, 'SERVICIO GENERAL').replace(/\s+/g, ' ').trim();
+}
+
+function rowDepartments(row) {
+  const raw = normalizeDepartment(row.department);
+  if (!raw) return [];
+  const aliases = [...DEPARTMENT_NAMES].sort((a, b) => normalizeDepartment(b).length - normalizeDepartment(a).length);
+  const found = new Map();
+  for (const name of aliases) {
+    const normalized = normalizeDepartment(name);
+    const pattern = normalized.split(' ').map(part => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('\\s+');
+    if (new RegExp(`(^|[^A-Z0-9])${pattern}([^A-Z0-9]|$)`).test(raw)) found.set(normalized, name);
+  }
+  if (!found.size) {
+    for (const part of raw.split(/\s*(?:[-–—/;,|+])\s*/).filter(Boolean)) found.set(part, part);
+  }
+  return [...found].map(([key, name]) => ({ key, name }));
+}
+
+function responsibleDepartmentGroup(row) {
+  const departments = rowDepartments(row).sort((a, b) => a.name.localeCompare(b.name, 'es'));
+  if (!departments.length) return { key: 'SIN_DEPARTAMENTO_ASIGNADO', name: 'Sin departamento asignado' };
+  return {
+    key: departments.map(department => department.key).join('|'),
+    name: departments.map(department => departmentTitle(department.name)).join(' + ')
+  };
 }
 
 function recordsForView() {
   let records = state.records;
   if (AREAS.includes(state.tab)) records = records.filter(row => row.area === state.tab);
+  if (state.tab.startsWith('Departamento:')) {
+    const departmentKey = state.tab.slice('Departamento:'.length);
+    records = records.filter(row => rowDepartments(row).some(department => department.key === departmentKey));
+  }
   const q = $('quickSearch').value.trim().toLocaleLowerCase('es');
   const status = $('filterStatus').value;
   const department = $('filterDepartment').value.trim().toLocaleLowerCase('es');
@@ -141,13 +292,13 @@ function groupInspections(records) {
 function render() {
   if (!state.user) return;
   drawNavigation();
-  const selected = SECTIONS.find(item => item.id === state.tab) || SECTIONS[0];
+  const sections = getSections();
+  const selected = sections.find(item => item.id === state.tab) || sections[0];
   const selectedInspection = state.tab === 'Historial' && (state.selectedInspectionId !== null || state.selectedInspectionDate !== null);
   const selectedRun = state.inspectionRuns.find(run => run.id === state.selectedInspectionId);
   const selectedInspectionDate = selectedRun?.inspectedAt || state.selectedInspectionDate;
   const inspectionRows = selectedInspection ? recordsForView().filter(row => selectedRun ? row.inspectionId === selectedRun.id : (row.inspectedAt || '') === state.selectedInspectionDate) : [];
   const number = selectedInspection ? selectedRun ? inspectionNumber(selectedRun) : inspectionNumber(state.selectedInspectionDate) : '';
-  $('currentCrumb').textContent = selectedInspection ? number : selected.title;
   $('pageTitle').textContent = selectedInspection ? number : selected.title;
   $('pageDescription').textContent = selectedInspection
     ? `${selectedInspectionDate ? dateLabel(selectedInspectionDate) : 'Fecha no registrada'} · ${inspectionRows.length} hallazgos · ${selectedRun?.status === 'en_curso' ? 'En curso' : 'Terminada'} · detalle por área`
@@ -155,8 +306,9 @@ function render() {
   $('pageEyebrow').textContent = state.tab === 'Historial' ? 'CONSULTA Y SEGUIMIENTO' : 'CONTROL DE INSTALACIONES';
   $('dashboardView').hidden = state.tab !== 'Inicio';
   $('alertsView').hidden = state.tab !== 'Alertas';
-  $('listView').hidden = ['Inicio', 'Alertas'].includes(state.tab);
-  $('listScope').textContent = selectedInspection ? 'Detalle de inspección' : state.tab === 'Historial' ? 'Inspecciones por fecha' : AREAS.includes(state.tab) ? selected.title : 'Todas las áreas';
+  $('complianceView').hidden = state.tab !== 'Cumplimientos';
+  $('listView').hidden = ['Inicio', 'Alertas', 'Cumplimientos'].includes(state.tab);
+  $('listScope').textContent = selectedInspection ? 'Detalle de inspección' : state.tab === 'Historial' ? 'Inspecciones por fecha' : selected.departmentKey ? `Departamento responsable · ${selected.title}` : 'Todas las áreas';
   $('backToHistory').hidden = !selectedInspection;
   const activeRun = state.inspectionRuns.find(run => run.id === state.activeInspectionId);
   const active = state.demo ? !!state.activeInspectionId : activeRun?.status === 'en_curso';
@@ -164,9 +316,11 @@ function render() {
   $('activeInspectionBadge').textContent = active ? `${state.activeInspectionNumber || inspectionNumber(activeRun)} · EN CURSO` : '';
   $('saveAreaButton').hidden = !AREAS.includes(state.tab) || !active;
   $('closeInspectionButton').hidden = !active;
+  $('closeInspectionButton').textContent = 'Inspección finalizada';
   const savedArea = state.progress[`${state.activeInspectionId}:${state.tab}`];
   $('saveAreaButton').textContent = savedArea ? `Guardado ✓ · ${savedArea.savedByName || userLabel()}` : 'Guardar pestaña';
-  $('newInspection').textContent = ['Inicio', 'Alertas', 'Historial'].includes(state.tab) ? '＋ Nueva inspección' : '＋ Nueva observación';
+  $('newInspection').textContent = active ? '＋ HALLAZGOS' : '＋ Nueva inspección';
+  $('newInspection').setAttribute('aria-label', active ? 'Registrar hallazgos en la inspección activa' : 'Iniciar nueva inspección');
   const filtered = recordsForView();
   if (state.tab === 'Alertas') {
     $('resultCount').textContent = '';
@@ -174,21 +328,22 @@ function render() {
   } else if (state.tab === 'Historial' && !selectedInspection) {
     const groups = groupInspections(filtered);
     $('resultCount').textContent = `${groups.length} ${groups.length === 1 ? 'inspección' : 'inspecciones'}`;
-    $('recordsHead').innerHTML = '<tr><th>N.º DE INSPECCIÓN</th><th>FECHA</th><th>ÁREAS INSPECCIONADAS</th><th>HALLAZGOS</th><th>ESTADOS</th><th>ABRIR</th></tr>';
+    $('recordsHead').innerHTML = '<tr><th>N.º DE INSPECCIÓN</th><th>FECHA</th><th>ÁREAS INSPECCIONADAS</th><th>HALLAZGOS</th><th>ESTADOS</th><th>ACCIONES</th></tr>';
     $('recordsBody').innerHTML = groups.map(group => {
       const statusSummary = Object.entries(group.statuses).filter(([, count]) => count).map(([status, count]) => `<span class="status-pill status-${escapeHtml(status)}">${escapeHtml(STATUS[status])}: ${count}</span>`).join(' ');
       const areas = [...group.areas].map(areaTitle).join(' · ');
       const groupNumber = group.run.id?.startsWith('demo-') ? inspectionNumber(group.run) : group.run.inspectionNumber ? inspectionNumber(group.run) : inspectionNumber(group.date);
       const statusText = group.run.status === 'en_curso' ? '<span class="run-status run-open">En curso</span>' : '<span class="run-status run-closed">Terminada</span>';
-      return `<tr class="inspection-group-row"><td><strong class="inspection-number">${escapeHtml(groupNumber)}</strong></td><td><strong>${escapeHtml(group.date ? dateLabel(group.date) : 'Sin fecha registrada')}</strong><div>${statusText}</div></td><td>${escapeHtml(areas || '—')}</td><td><strong>${group.rows.length}</strong></td><td><div class="inspection-statuses">${statusSummary}</div></td><td><button class="button secondary open-inspection" data-open-inspection="${escapeHtml(group.id)}" type="button">${group.run.status === 'en_curso' ? 'Continuar' : 'Abrir detalle'} <span aria-hidden="true">→</span></button></td></tr>`;
+      return `<tr class="inspection-group-row"><td><strong class="inspection-number">${escapeHtml(groupNumber)}</strong></td><td><strong>${escapeHtml(group.date ? dateLabel(group.date) : 'Sin fecha registrada')}</strong><div>${statusText}</div></td><td>${escapeHtml(areas || '—')}</td><td><strong>${group.rows.length}</strong></td><td><div class="inspection-statuses">${statusSummary}</div></td><td><button class="button secondary open-inspection" data-open-inspection="${escapeHtml(group.id)}" type="button">${group.run.status === 'en_curso' ? 'Continuar' : 'Abrir detalle'} <span aria-hidden="true">→</span></button><button class="button danger delete-inspection" data-delete-inspection="${escapeHtml(group.id)}" type="button" ${state.demo || state.role === 'admin' ? '' : 'disabled'}>Eliminar</button></td></tr>`;
     }).join('');
   } else {
     const detailRows = selectedInspection ? inspectionRows : filtered;
     $('resultCount').textContent = `${detailRows.length} ${detailRows.length === 1 ? 'observación' : 'observaciones'}`;
-    $('recordsHead').innerHTML = '<tr><th>FECHA / ÁREA</th><th>HALLAZGO</th><th>RESPONSABLE</th><th>REGISTRÓ</th><th>DÍAS ABIERTOS</th><th>ESTADO</th><th>EVIDENCIA</th><th></th></tr>';
+    $('recordsHead').innerHTML = '<tr><th>FECHA / ÁREA</th><th>HALLAZGO</th><th>IMPORTANCIA</th><th>RESPONSABLE</th><th>REGISTRÓ</th><th>DÍAS ABIERTOS</th><th>ESTADO</th><th>EVIDENCIA</th><th></th></tr>';
     $('recordsBody').innerHTML = detailRows.map(row => `<tr>
       <td><div class="date-area"><strong>${escapeHtml(dateLabel(row.inspectedAt))}</strong><span>${escapeHtml(areaTitle(row.area))}${row.sourceSection ? ` · ${escapeHtml(row.sourceSection)}` : ''} · ${escapeHtml(row.location)}</span></div></td>
       <td><span class="finding-title">${escapeHtml(row.description)}</span>${row.notes ? `<span class="finding-note">${escapeHtml(row.notes)}</span>` : ''}</td>
+      <td><span class="importance-mark importance-${importanceOf(row)}">${importanceLabel(importanceOf(row))}</span></td>
       <td class="department-cell">${escapeHtml(row.department || '—')}</td>
       <td class="department-cell">${escapeHtml(row.inspectorName || row.createdByName || '—')}</td>
       <td>${escapeHtml(daysOpen(row))}</td>
@@ -202,6 +357,7 @@ function render() {
   $('filterCount').hidden = activeFilterCount() === 0;
   $('filterCount').textContent = activeFilterCount();
   renderDashboard();
+  renderCompliance();
 }
 
 function activeFilterCount() {
@@ -215,7 +371,12 @@ function renderDashboard() {
   $('statCompliant').textContent = counts.cumple;
   $('statFailed').textContent = counts.no_cumple;
   $('statPartial').textContent = counts.parcial;
-  $('donutTotal').textContent = rows.length;
+  const { status: pivotStatus, area: pivotArea, departmentKey: pivotDepartmentKey } = state.pivotFilter;
+  const donutRows = rows.filter(row => (!pivotStatus || row.status === pivotStatus)
+    && (!pivotArea || row.area === pivotArea)
+    && (!pivotDepartmentKey || responsibleDepartmentGroup(row).key === pivotDepartmentKey));
+  $('donutTotal').textContent = donutRows.length;
+  $('donutLabel').textContent = pivotStatus ? STATUS[pivotStatus] : pivotArea ? areaTitle(pivotArea) : pivotDepartmentKey ? 'departamento' : 'hallazgos';
   $('legendCompliant').textContent = counts.cumple;
   $('legendFailed').textContent = counts.no_cumple;
   $('legendPartial').textContent = counts.parcial;
@@ -224,26 +385,162 @@ function renderDashboard() {
   const first = counts.cumple / total * 100;
   const second = first + counts.no_cumple / total * 100;
   const third = second + counts.parcial / total * 100;
-  $('statusDonut').style.background = rows.length ? `conic-gradient(#3b9875 0% ${first}%,#cd5a55 ${first}% ${second}%,#ca9039 ${second}% ${third}%,#8997a7 ${third}% 100%)` : 'conic-gradient(#e2e8ed 0% 100%)';
+  const baseChartColors = { cumple: '#3b9875', no_cumple: '#cd5a55', parcial: '#ca9039', nueva: '#8997a7' };
+  const mutedChartColors = { cumple: '#c8d9d0', no_cumple: '#dfc8c5', parcial: '#e3d9c5', nueva: '#d1d6dc' };
+  const selectedStatus = state.pivotFilter.status;
+  const chartColors = Object.fromEntries(Object.entries(baseChartColors).map(([key, color]) => [key, selectedStatus && key !== selectedStatus ? mutedChartColors[key] : color]));
+  $('statusDonut').style.background = rows.length ? `conic-gradient(${chartColors.cumple} 0% ${first}%,${chartColors.no_cumple} ${first}% ${second}%,${chartColors.parcial} ${second}% ${third}%,${chartColors.nueva} ${third}% 100%)` : 'conic-gradient(#e2e8ed 0% 100%)';
+  $('statusDonut').classList.toggle('is-pivot-selected', !!selectedStatus);
+  $('statusDonut').style.setProperty('--pivot-highlight', baseChartColors[selectedStatus] || 'transparent');
+  const selectedSummary = pivotStatus || pivotArea || pivotDepartmentKey
+    ? ` Selección actual: ${donutRows.length} hallazgos${pivotStatus ? ` en estado ${STATUS[pivotStatus]}` : ''}${pivotArea ? ` del área ${areaTitle(pivotArea)}` : ''}.`
+    : '';
+  $('statusDonut').setAttribute('aria-label', `Gráfico de estado general: ${Object.entries(counts).map(([key, value]) => `${STATUS[key]} ${value}`).join(', ')}.${selectedSummary} Haz clic en un segmento para filtrar.`);
+  document.querySelectorAll('.legend-filter').forEach(button => {
+    const selected = state.pivotFilter.status === button.dataset.pivotStatus && !state.pivotFilter.area && !state.pivotFilter.departmentKey;
+    button.classList.toggle('is-active', selected);
+    button.setAttribute('aria-pressed', String(selected));
+  });
    $('categorySummary').innerHTML = AREAS.map(area => {
      const areaRows = rows.filter(row => row.area === area), count = areaRows.length;
      const segments = ['cumple','no_cumple','parcial','nueva'].map(status => {
        const value = areaRows.filter(row => row.status === status).length;
-       return `<span class="bar-segment segment-${status}" style="width:${rows.length ? value / rows.length * 100 : 0}%" title="${escapeHtml(STATUS[status])}: ${value}"></span>`;
+       const selected = state.pivotFilter.area === area && state.pivotFilter.status === status && !state.pivotFilter.departmentKey;
+       return `<button class="bar-segment segment-${status}${selected ? ' is-active' : ''}" data-pivot-area="${area}" data-pivot-status="${status}" style="width:${rows.length ? value / rows.length * 100 : 0}%" title="Filtrar ${escapeHtml(areaTitle(area))} · ${escapeHtml(STATUS[status])}: ${value}" aria-label="Filtrar ${escapeHtml(areaTitle(area))}, ${escapeHtml(STATUS[status])}: ${value}" aria-pressed="${selected}" type="button"></button>`;
      }).join('');
      const label = ['cumple','no_cumple','parcial','nueva'].map(status => `${STATUS[status]}: ${areaRows.filter(row => row.status === status).length}`).join(', ');
-     return `<div class="category-row"><span>${escapeHtml(areaTitle(area))}</span><div class="bar-track segmented-bar" role="img" aria-label="${escapeHtml(areaTitle(area))}: ${escapeHtml(label)}">${segments}</div><b>${count}</b></div>`;
+     return `<div class="category-row"><button class="category-area-filter${state.pivotFilter.area === area && !state.pivotFilter.status ? ' is-active' : ''}" data-pivot-area="${area}" type="button" aria-pressed="${state.pivotFilter.area === area && !state.pivotFilter.status}">${escapeHtml(areaTitle(area))}</button><div class="bar-track segmented-bar" role="group" aria-label="${escapeHtml(areaTitle(area))}: ${escapeHtml(label)}">${segments}</div><b>${count}</b></div>`;
    }).join('');
+  renderPivotTable();
   const recent = [...rows].sort((a, b) => b.inspectedAt.localeCompare(a.inspectedAt)).slice(0, 5);
   $('recentRows').innerHTML = recent.length ? `<div class="recent-list"><div class="recent-header" aria-hidden="true"><span>Fecha</span><span>Hallazgo</span><span class="recent-location">Área / ubicación</span><span>Estado</span><span>Registró</span><span></span></div>${recent.map(row => `<div class="recent-row"><span class="recent-date">${escapeHtml(dateLabel(row.inspectedAt))}</span><span class="recent-finding">${escapeHtml(row.description)}</span><span class="recent-location">${escapeHtml(row.area)} · ${escapeHtml(row.location)}</span><span class="status-pill status-${escapeHtml(row.status)}">${escapeHtml(STATUS[row.status] || '')}</span><span class="recent-registered" title="${escapeHtml(row.inspectorName || row.createdByName || '—')}">${escapeHtml(row.inspectorName || row.createdByName || '—')}</span><button class="row-actions" type="button" data-edit="${escapeHtml(row.id)}" aria-label="Editar observación">↗</button></div>`).join('')}</div>` : '<div class="empty-state"><div class="empty-glyph">▧</div><h3>Tu historial empieza aquí</h3><p>Las observaciones guardadas aparecerán en este resumen.</p></div>';
-  const priorities = rows.filter(row => row.status === 'no_cumple' || row.status === 'parcial').sort((a, b) => (a.status === b.status ? (b.inspectedAt || '').localeCompare(a.inspectedAt || '') : a.status === 'no_cumple' ? -1 : 1));
+  const priorities = rows.filter(row => row.status === 'no_cumple' || row.status === 'parcial').sort((a, b) => priorityOrder[alertPriority(b)] - priorityOrder[alertPriority(a)] || (Number(daysOpen(b)) || 0) - (Number(daysOpen(a)) || 0));
   $('alertTotal').textContent = priorities.length;
-  $('alertsBody').innerHTML = priorities.map(row => `<tr><td><span class="priority-mark ${row.status === 'no_cumple' ? 'priority-high' : 'priority-medium'}">${row.status === 'no_cumple' ? 'Alta' : 'Media'}</span></td><td><strong>${escapeHtml(row.inspectionNumber || inspectionNumber(row.inspectedAt))}</strong></td><td>${escapeHtml(areaTitle(row.area))}<span class="table-secondary">${escapeHtml(row.sourceSection ? `${row.sourceSection} · ` : '')}${escapeHtml(row.location)}</span></td><td><span class="finding-title">${escapeHtml(row.description)}</span></td><td><span class="status-pill status-${escapeHtml(row.status)}">${escapeHtml(STATUS[row.status])}</span></td><td><button class="button corrective-action-button" data-correct="${escapeHtml(row.id)}" type="button">Registrar corrección</button></td></tr>`).join('');
+  $('alertsBody').innerHTML = priorities.map(row => `<tr><td><span class="priority-mark priority-${alertPriority(row)}">${importanceLabel(alertPriority(row))}</span>${row.reincidenceOf ? '<span class="table-secondary recurrence-alert-note">Reincidencia</span>' : ''}</td><td><span class="importance-mark importance-${importanceOf(row)}">${importanceLabel(importanceOf(row))}</span></td><td><strong>${escapeHtml(row.inspectionNumber || inspectionNumber(row.inspectedAt))}</strong></td><td>${escapeHtml(areaTitle(row.area))}<span class="table-secondary">${escapeHtml(row.sourceSection ? `${row.sourceSection} · ` : '')}${escapeHtml(row.location)}</span></td><td><span class="finding-title">${escapeHtml(row.description)}</span>${row.reincidenceOf ? '<span class="table-secondary recurrence-alert-note">Vuelve a registrarse un hallazgo pendiente.</span>' : ''}</td><td>${escapeHtml(daysOpen(row))}</td><td><span class="status-pill status-${escapeHtml(row.status)}">${escapeHtml(STATUS[row.status])}</span></td><td><button class="button corrective-action-button" data-correct="${escapeHtml(row.id)}" type="button">Registrar corrección</button></td></tr>`).join('');
   $('alertsEmpty').hidden = priorities.length > 0;
   const actions = state.corrections;
   $('correctionTotal').textContent = `${actions.length} ${actions.length === 1 ? 'acción' : 'acciones'}`;
   $('correctionsBody').innerHTML = actions.map(action => { const actionDate = action.createdAt?.toDate?.(); const finding = state.records.find(row => row.id === action.observationId) || action; return `<tr><td>${escapeHtml(actionDate ? actionDate.toLocaleDateString('es-EC') : dateLabel(action.actionDate))}</td><td><strong>${escapeHtml(finding.inspectionNumber || action.inspectionNumber || '—')}</strong><span class="table-secondary">${escapeHtml(areaTitle(finding.area))} · ${escapeHtml(finding.location || '')}</span><span class="table-secondary">${escapeHtml(finding.description || '')}</span></td><td><span class="finding-title">${escapeHtml(action.note || '')}</span><span class="table-secondary">${(action.photos || []).length} evidencia${(action.photos || []).length === 1 ? '' : 's'}</span></td><td><span class="status-pill status-${escapeHtml(action.previousStatus)}">${escapeHtml(STATUS[action.previousStatus] || '')}</span> → <span class="status-pill status-${escapeHtml(action.newStatus)}">${escapeHtml(STATUS[action.newStatus] || '')}</span></td><td>${escapeHtml(action.byName || '—')}</td></tr>`; }).join('');
   $('correctionsEmpty').hidden = actions.length > 0;
+}
+
+function renderCompliance() {
+  const today = todayIso();
+  const eligibleRows = state.records.filter(row => row.complianceDueDate && ['no_cumple', 'parcial', 'nueva', 'cumple'].includes(row.status));
+  const openRows = state.records.filter(row => ['no_cumple', 'parcial', 'nueva'].includes(row.status))
+    .sort((a, b) => (a.complianceDueDate || '9999-12-31').localeCompare(b.complianceDueDate || '9999-12-31') || (b.inspectedAt || '').localeCompare(a.inspectedAt || ''));
+  const overall = eligibleRows.map(row => complianceResult(row, today));
+  const onTime = overall.filter(item => item.kind === 'a_tiempo').length;
+  const overdue = openRows.filter(row => row.complianceDueDate && complianceResult(row, today).kind === 'vencido').length;
+  $('complianceOpenTotal').textContent = openRows.length;
+  $('complianceOverdueTotal').textContent = overdue;
+  $('complianceOnTimeTotal').textContent = onTime;
+  $('complianceEffectiveness').textContent = eligibleRows.length ? `${Math.round(onTime / eligibleRows.length * 100)}%` : '—';
+  const missingDeadline = state.records.filter(row => ['no_cumple', 'parcial', 'nueva'].includes(row.status) && !row.complianceDueDate).length;
+  $('complianceEffectivenessHint').textContent = eligibleRows.length ? `${eligibleRows.length} hallazgos evaluables · ${missingDeadline} abiertos sin plazo` : `${missingDeadline} abiertos sin plazo registrado`;
+  $('compliancePendingCount').textContent = `${openRows.length} ${openRows.length === 1 ? 'observación' : 'observaciones'}`;
+
+  const departments = new Map();
+  for (const row of eligibleRows) {
+    const owners = rowDepartments(row);
+    const assigned = owners.length ? owners : [{ key: 'SIN_DEPARTAMENTO_ASIGNADO', name: 'Sin departamento asignado' }];
+    const result = complianceResult(row, today);
+    for (const owner of assigned) {
+      if (!departments.has(owner.key)) departments.set(owner.key, { name: departmentTitle(owner.name), scheduled: 0, onTime: 0, open: 0, overdue: 0, late: 0, delayDays: 0 });
+      const summary = departments.get(owner.key);
+      summary.scheduled++;
+      if (result.kind === 'a_tiempo') summary.onTime++;
+      else if (result.kind === 'abierto' || result.kind === 'vence_hoy') summary.open++;
+      else if (result.kind === 'vencido') { summary.overdue++; summary.delayDays += result.days; }
+      else if (result.kind === 'tarde') summary.late++;
+    }
+  }
+  const orderedDepartments = [...departments.values()].sort((a, b) => b.overdue - a.overdue || b.delayDays - a.delayDays || a.name.localeCompare(b.name, 'es'));
+  const selectedCell = key => state.complianceFilter === key ? ' class="compliance-filter-selected"' : '';
+  $('complianceDepartmentBody').innerHTML = orderedDepartments.map(item => `<tr><td><strong>${escapeHtml(item.name)}</strong></td><td${selectedCell('con_plazo')}>${item.scheduled}</td><td${selectedCell('a_tiempo')}>${item.onTime}</td><td${selectedCell('abierto')}>${item.open}</td><td class="${item.overdue ? 'deadline-overdue ' : ''}${state.complianceFilter === 'vencido' ? 'compliance-filter-selected' : ''}">${item.overdue}</td><td${selectedCell('tarde')}>${item.late}</td><td class="${item.delayDays ? 'deadline-overdue ' : ''}${state.complianceFilter === 'retraso' ? 'compliance-filter-selected' : ''}">${item.delayDays}</td><td><strong>${Math.round(item.onTime / item.scheduled * 100)}%</strong></td></tr>`).join('');
+  $('complianceDepartmentEmpty').hidden = orderedDepartments.length > 0;
+  const filter = state.complianceFilter;
+  const followupRows = filter ? complianceRowsForFilter(filter, today) : openRows;
+  $('compliancePendingEyebrow').textContent = filter ? 'RESULTADOS DEL INDICADOR' : 'SEGUIMIENTO ACTIVO';
+  $('compliancePendingTitle').textContent = filter ? `Hallazgos: ${COMPLIANCE_FILTER_LABELS[filter]}` : 'Observaciones pendientes y vencimientos';
+  $('compliancePendingCount').textContent = `${followupRows.length} ${followupRows.length === 1 ? 'hallazgo' : 'hallazgos'}`;
+  $('clearComplianceFilter').hidden = !filter;
+  document.querySelectorAll('[data-compliance-filter]').forEach(button => {
+    const active = button.dataset.complianceFilter === filter;
+    button.setAttribute('aria-pressed', String(active));
+    button.closest('th')?.classList.toggle('is-selected', active);
+  });
+  $('compliancePendingBody').innerHTML = followupRows.map(row => {
+    const result = complianceResult(row, today);
+    const deadlineText = result.kind === 'sin_plazo' ? 'Sin plazo asignado' : result.kind === 'vencido'
+      ? `${result.days} ${result.days === 1 ? 'día' : 'días'} de retraso`
+      : result.kind === 'vence_hoy' ? 'Vence hoy'
+        : result.kind === 'a_tiempo' ? 'Cumplido a tiempo'
+          : result.kind === 'tarde' ? `Cumplido ${result.days} ${result.days === 1 ? 'día' : 'días'} tarde`
+            : result.kind === 'abierto' ? `Quedan ${result.days} ${result.days === 1 ? 'día' : 'días'}` : '—';
+    const linked = state.records.find(item => item.id === row.reincidenceOf);
+    return `<tr><td>${escapeHtml(rowDepartments(row).map(item => departmentTitle(item.name)).join(' + ') || 'Sin departamento asignado')}</td><td><span class="finding-title">${escapeHtml(row.description)}</span><span class="table-secondary">${escapeHtml(row.inspectionNumber || inspectionNumber(row.inspectedAt))}</span></td><td>${escapeHtml(areaTitle(row.area))}<span class="table-secondary">${escapeHtml(row.location)}</span></td><td>${row.complianceDueDate ? escapeHtml(dateLabel(row.complianceDueDate)) : '—'}</td><td class="${result.kind === 'vencido' ? 'deadline-overdue' : result.kind === 'vence_hoy' ? 'deadline-today' : result.kind === 'sin_plazo' ? 'deadline-missing' : 'deadline-safe'}">${deadlineText}</td><td><span class="status-pill status-${escapeHtml(row.status)}">${escapeHtml(STATUS[row.status])}</span></td><td>${linked ? `<strong class="recurrence-badge">Reincidencia</strong><span class="table-secondary">Desde ${escapeHtml(linked.inspectionNumber || inspectionNumber(linked.inspectedAt))}</span>` : '—'}</td><td><button class="button secondary compliance-edit-button" data-edit="${escapeHtml(row.id)}" type="button" aria-label="Editar observación">Editar</button></td></tr>`;
+  }).join('');
+  $('compliancePendingEmpty').textContent = filter ? `No hay hallazgos para “${COMPLIANCE_FILTER_LABELS[filter]}”.` : 'No hay observaciones abiertas. Los registros sin plazo aparecerán aquí como “Sin plazo”.';
+  $('compliancePendingEmpty').hidden = followupRows.length > 0;
+}
+
+function renderPivotTable() {
+  const { status, area, departmentKey } = state.pivotFilter;
+  const rows = state.records.filter(row => (!status || row.status === status) && (!area || row.area === area));
+  const totals = new Map();
+  for (const row of rows) {
+    const registrant = String(row.inspectorName || row.createdByName || 'Sin nombre registrado').trim() || 'Sin nombre registrado';
+    const group = responsibleDepartmentGroup(row);
+    if (departmentKey && group.key !== departmentKey) continue;
+    const groupKey = `${group.key}\u0000${registrant.toLocaleLowerCase('es')}`;
+    if (!totals.has(groupKey)) totals.set(groupKey, { key: group.key, name: group.name, registrant, total: 0, statuses: Object.fromEntries(Object.keys(STATUS).map(key => [key, 0])) });
+    const item = totals.get(groupKey);
+    item.total++;
+    if (item.statuses[row.status] !== undefined) item.statuses[row.status]++;
+  }
+  const departments = [...totals.values()].sort((a, b) => b.total - a.total || a.name.localeCompare(b.name, 'es'));
+  const active = !!(status || area || departmentKey);
+  $('pivotAreaBadge').hidden = !area;
+  $('pivotAreaBadge').textContent = area ? `Área: ${areaTitle(area)}` : '';
+  const parts = [status && `Estado: ${STATUS[status]}`, departmentKey && `Departamento: ${departmentTitle(departments[0]?.name || departmentKey)}`].filter(Boolean);
+  const visibleCount = departmentKey ? rows.filter(row => responsibleDepartmentGroup(row).key === departmentKey).length : rows.length;
+  const countLabel = `${visibleCount} ${visibleCount === 1 ? 'hallazgo' : 'hallazgos'}`;
+  $('pivotCaption').textContent = parts.length ? `${parts.join(' · ')} · ${countLabel}` : active ? countLabel : `Todos los estados y todas las áreas · ${countLabel}`;
+  $('clearPivotFilter').hidden = !active;
+  $('pivotTableHead').innerHTML = status
+    ? `<tr><th>DEPARTAMENTO(S) RESPONSABLE(S)</th><th>${escapeHtml(STATUS[status].toLocaleUpperCase('es'))}</th><th>REGISTRÓ</th></tr>`
+    : '<tr><th>DEPARTAMENTO(S) RESPONSABLE(S)</th><th>HALLAZGOS / OBSERVACIONES</th><th>CERRADO</th><th>ABIERTO</th><th>EN CURSO</th><th>NUEVA OBSERVACIÓN</th><th>REGISTRÓ</th></tr>';
+  $('pivotTableBody').innerHTML = departments.map(item => {
+    const department = `<button class="pivot-department-filter" data-pivot-department="${escapeHtml(item.key)}" type="button" aria-pressed="${departmentKey === item.key}">${escapeHtml(departmentTitle(item.name))}</button>`;
+    return status
+      ? `<tr class="pivot-department-row${departmentKey === item.key ? ' is-active' : ''}"><td>${department}</td><td><strong>${item.statuses[status]}</strong></td><td>${escapeHtml(item.registrant)}</td></tr>`
+      : `<tr class="pivot-department-row${departmentKey === item.key ? ' is-active' : ''}"><td>${department}</td><td><strong>${item.total}</strong></td><td>${item.statuses.cumple}</td><td>${item.statuses.no_cumple}</td><td>${item.statuses.parcial}</td><td>${item.statuses.nueva}</td><td>${escapeHtml(item.registrant)}</td></tr>`;
+  }).join('');
+  $('pivotEmpty').hidden = departments.length > 0;
+}
+
+function setPivotStatus(status, area = '') {
+  const current = state.pivotFilter;
+  state.pivotFilter = current.status === status && current.area === area && !current.departmentKey
+    ? { status: '', area: '', departmentKey: '' }
+    : { status, area, departmentKey: '' };
+  renderDashboard();
+}
+
+function statusAtDonutPoint(event) {
+  const rect = $('statusDonut').getBoundingClientRect();
+  const dx = event.clientX - (rect.left + rect.width / 2), dy = event.clientY - (rect.top + rect.height / 2);
+  if (Math.hypot(dx, dy) < Math.min(rect.width, rect.height) * .36) return;
+  const angle = (Math.atan2(dy, dx) * 180 / Math.PI + 90 + 360) % 360;
+  const keys = Object.keys(STATUS), counts = Object.fromEntries(keys.map(key => [key, state.records.filter(row => row.status === key).length]));
+  const total = Object.values(counts).reduce((sum, count) => sum + count, 0);
+  if (!total) return;
+  let cursor = 0;
+  for (const key of keys) {
+    cursor += counts[key] / total * 360;
+    if (angle < cursor) { setPivotStatus(key); return; }
+  }
 }
 
 function areaTitle(area) { return area === 'SILO DE HIELO' ? 'Silo de hielo' : area ? area[0] + area.slice(1).toLowerCase() : ''; }
@@ -287,7 +584,7 @@ function startRecordsListener() {
 }
 
 function startApp(user, role) {
-  state.user = user; state.role = role; state.demo = false;
+  state.user = user; state.role = role; state.demo = false; state.pivotFilter = { status: '', area: '', departmentKey: '' };
   $('userEmail').textContent = userLabel(user);
   $('userInitial').textContent = (user.email || 'I').charAt(0).toUpperCase();
   $('resetDemoButton').hidden = true;
@@ -303,7 +600,7 @@ async function loadDemoRecords() {
       return response.json();
     }).then(rows => {
       if (!Array.isArray(rows) || rows.length !== 158) throw new Error('El archivo de ejemplo está incompleto.');
-      return rows;
+      return rows.map(row => ({ ...row, importance: row.importance || inferImportance(row), complianceDueDate: row.complianceDueDate || defaultComplianceDueDate(row.status, row.notificationDate || row.inspectedAt) }));
     }).catch(error => { demoRecordsPromise = null; throw error; });
   }
   const rows = await demoRecordsPromise;
@@ -318,7 +615,7 @@ async function enterDemo() {
     if (state.unsubscribe) state.unsubscribe(); state.unsubscribe = null;
     const demoRun = { id: 'demo-run-20260912', inspectionNumber: 'INS-20260912-DEMO', inspectedAt: '2026-09-12', status: 'terminada', openedByName: 'Anthony Cobos y Michelle Loor', openedByEmail: 'calidad@expalsa.local', participants: ['Anthony Cobos', 'Michelle Loor'] };
     state.user = { uid: 'demo-local', email: 'ejemplo@expalsa.local', displayName: 'Ejemplo local' };
-    state.role = 'demo'; state.demo = true; state.tab = 'Inicio'; state.selectedInspectionDate = null; state.selectedInspectionId = null;
+    state.role = 'demo'; state.demo = true; state.tab = 'Inicio'; state.selectedInspectionDate = null; state.selectedInspectionId = null; state.pivotFilter = { status: '', area: '', departmentKey: '' };
     state.activeInspectionId = null; state.activeInspectionNumber = null; state.inspectionRuns = [demoRun]; state.corrections = []; state.progress = {};
     state.records = records.map(row => ({ ...row, inspectionId: demoRun.id, inspectionNumber: demoRun.inspectionNumber }));
     $('userEmail').textContent = 'Modo ejemplo'; $('userInitial').textContent = 'E';
@@ -336,7 +633,7 @@ async function enterDemo() {
 async function resetDemo() {
   if (!state.demo) return;
   try {
-    const records = await loadDemoRecords(); state.tab = 'Inicio'; state.selectedInspectionDate = null; state.selectedInspectionId = null; state.activeInspectionId = null; state.activeInspectionNumber = null; state.corrections = []; state.progress = {};
+    const records = await loadDemoRecords(); state.tab = 'Inicio'; state.selectedInspectionDate = null; state.selectedInspectionId = null; state.activeInspectionId = null; state.activeInspectionNumber = null; state.corrections = []; state.progress = {}; state.pivotFilter = { status: '', area: '', departmentKey: '' };
     state.inspectionRuns = [{ id: 'demo-run-20260912', inspectionNumber: 'INS-20260912-DEMO', inspectedAt: '2026-09-12', status: 'terminada', openedByName: 'Anthony Cobos y Michelle Loor', openedByEmail: 'calidad@expalsa.local', participants: ['Anthony Cobos', 'Michelle Loor'] }];
     state.records = records.map(row => ({ ...row, inspectionId: state.inspectionRuns[0].id, inspectionNumber: state.inspectionRuns[0].inspectionNumber }));
     $('quickSearch').value = '';
@@ -345,7 +642,7 @@ async function resetDemo() {
   } catch (error) { showToast(error.message || 'No se pudo recargar el ejemplo.', true); }
 }
 
-async function createInspection(area = 'PLANTA', openForm = true) {
+async function createInspection(area = 'PLANTA', openForm = false) {
   const inspectedAt = new Date().toLocaleDateString('en-CA');
   const name = userLabel();
   if (state.demo) {
@@ -377,7 +674,7 @@ async function closeInspection() {
       await updateDoc(doc(db, RUNS, run.id), { status: 'terminada', closedAt: serverTimestamp(), closedByUid: state.user.uid, closedByName: name, updatedAt: serverTimestamp(), updatedBy: state.user.uid, updatedByName: name, participants: firebaseApi.arrayUnion(name) });
       run.status = 'terminada';
     }
-    state.activeInspectionId = null; state.activeInspectionNumber = null; render(); showToast(`Inspección ${inspectionNumber(run)} terminada.`);
+    state.activeInspectionId = null; state.activeInspectionNumber = null; state.selectedInspectionId = null; state.selectedInspectionDate = null; state.tab = 'Inicio'; render(); showToast(`Inspección ${inspectionNumber(run)} terminada.`);
   } catch (error) { showToast(friendlyError(error), true); }
 }
 
@@ -398,7 +695,7 @@ async function saveAreaProgress() {
 }
 
 function exitDemo() {
-  state.demo = false; state.user = null; state.records = []; state.inspectionRuns = []; state.corrections = []; state.progress = {}; state.activeInspectionId = null; state.activeInspectionNumber = null; state.selectedInspectionId = null; state.tab = 'Inicio';
+  state.demo = false; state.user = null; state.records = []; state.inspectionRuns = []; state.corrections = []; state.progress = {}; state.activeInspectionId = null; state.activeInspectionNumber = null; state.selectedInspectionId = null; state.tab = 'Inicio'; state.pivotFilter = { status: '', area: '', departmentKey: '' };
   $('appShell').hidden = true; $('authGate').hidden = false;
   $('resetDemoButton').hidden = true; $('logoutButton').textContent = 'Salir';
   setConnection(false, 'Conexión pendiente');
@@ -458,6 +755,15 @@ function loadPdfLibraries() {
   return pdfLibrariesPromise;
 }
 
+function loadXlsxLibrary() {
+  if (globalThis.XLSX?.writeFile) return Promise.resolve(globalThis.XLSX);
+  if (!xlsxLibraryPromise) {
+    xlsxLibraryPromise = import('https://cdn.sheetjs.com/xlsx-0.20.3/package/xlsx.mjs')
+      .catch(error => { xlsxLibraryPromise = null; throw new Error(`No se pudo cargar el módulo Excel: ${friendlyError(error)}`); });
+  }
+  return xlsxLibraryPromise;
+}
+
 function loadInspectionModules() {
   if (firebaseApi?.db && firebaseApi?.storage) return Promise.resolve();
   if (!inspectionModulesPromise) {
@@ -490,6 +796,8 @@ async function openPhotoViewer(rowId, photoIndex = 0) {
   const token = crypto.randomUUID();
   state.viewingPhoto = { rowId, index, token };
   $('photoViewerImage').removeAttribute('src');
+  $('photoViewerImage').style.width = '';
+  $('photoDownloadButton').disabled = true;
   $('photoViewerImage').alt = `Evidencia fotográfica de ${row.location}`;
   $('photoViewerCaption').textContent = `${areaTitle(row.area)} · ${row.location} · Foto ${index + 1} de ${photos.length}`;
   $('photoViewerPosition').textContent = `${index + 1} / ${photos.length}`;
@@ -515,10 +823,37 @@ async function openPhotoViewer(rowId, photoIndex = 0) {
     if (state.viewingPhoto?.token === token) {
       if (!source) throw new Error('La foto no tiene una ruta de evidencia válida.');
       $('photoViewerImage').src = source;
+      $('photoViewerImage').onload = () => {
+        if (state.viewingPhoto?.token !== token) return;
+        $('photoViewerImage').style.width = `${$('photoViewerImage').naturalWidth * 2}px`;
+        $('photoDownloadButton').disabled = false;
+      };
     }
   } catch (error) {
     $('photoViewerCaption').textContent = friendlyError(error);
   }
+}
+
+async function downloadCurrentPhoto() {
+  const current = state.viewingPhoto;
+  const row = state.records.find(item => item.id === current?.rowId);
+  const photo = row?.photos?.[current?.index];
+  const image = $('photoViewerImage');
+  if (!row || !photo || !image.src) return;
+  const button = $('photoDownloadButton');
+  button.disabled = true;
+  try {
+    const response = await fetch(image.src);
+    if (!response.ok) throw new Error('No se pudo preparar la descarga de la foto.');
+    const blob = await response.blob();
+    const extension = (blob.type.split('/')[1] || 'jpg').replace('jpeg', 'jpg').replace(/[^a-z0-9]/gi, '');
+    const fallback = `${row.inspectionNumber || inspectionNumber(row.inspectedAt)}-${row.location || 'evidencia'}-foto-${current.index + 1}`;
+    const baseName = String(photo.name || fallback).replace(/\.[^.]+$/, '').replace(/[<>:"/\\|?*\u0000-\u001f]/g, '-').replace(/\s+/g, '-');
+    const url = URL.createObjectURL(blob), link = document.createElement('a');
+    link.href = url; link.download = `${baseName}.${extension}`; document.body.appendChild(link); link.click(); link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  } catch (error) { showToast(friendlyError(error), true); }
+  finally { button.disabled = false; }
 }
 
 async function changeCurrentPhoto(replacement = null) {
@@ -607,11 +942,12 @@ async function saveCorrection(event) {
   if (newStatus === row.status) { showToast('Selecciona un estado distinto al actual.', true); return; }
   const button = $('saveCorrection'); button.disabled = true; button.textContent = 'Guardando…';
   try {
-    const actionId = `local-${crypto.randomUUID()}`, name = userLabel(), date = new Date().toLocaleDateString('en-CA');
-    const action = { id: actionId, inspectionId: row.inspectionId || row.id, inspectionNumber: row.inspectionNumber || inspectionNumber(row.inspectedAt), observationId: row.id, area: row.area, location: row.location, description: row.description, previousStatus: row.status, newStatus, note, photos: [], byUid: state.user.uid, byName: name, byEmail: state.user.email, actionDate: date };
+  const actionId = `local-${crypto.randomUUID()}`, name = userLabel(), date = todayIso();
+    const completedAt = newStatus === 'cumple' ? date : '';
+    const action = { id: actionId, inspectionId: row.inspectionId || row.id, inspectionNumber: row.inspectionNumber || inspectionNumber(row.inspectedAt), observationId: row.id, area: row.area, location: row.location, description: row.description, previousStatus: row.status, newStatus, note, photos: [], byUid: state.user.uid, byName: name, byEmail: state.user.email, actionDate: date, complianceCompletedAt: completedAt };
     if (state.demo) {
       action.photos = state.correctionPhotos.map(photo => ({ preview: photo.preview, name: photo.name }));
-      row.status = newStatus; row.lastCorrectionId = actionId; row.updatedByName = name;
+      row.status = newStatus; row.complianceCompletedAt = completedAt; row.lastCorrectionId = actionId; row.updatedByName = name;
       state.corrections.unshift(action);
     } else {
       const { db, doc, collection, ref, uploadBytes, serverTimestamp, runTransaction } = firebaseApi;
@@ -643,8 +979,13 @@ function openNewDialog(area = AREAS.includes(state.tab) ? state.tab : 'PLANTA') 
   }
   const form = $('inspectionForm'); form.reset(); form.elements.id.value = '';
   form.elements.area.value = area; fillLocationOptions(area); fillDepartment();
+  form.elements.complianceDueDate.disabled = false;
+  $('complianceDueDateHint').textContent = 'Opcional; necesaria para medir el plazo y la efectividad.';
+  $('recurrenceField').hidden = true; updateRecurrenceChoices();
   const run = state.inspectionRuns.find(item => item.id === state.activeInspectionId);
   form.elements.inspectedAt.value = run?.inspectedAt || new Date().toLocaleDateString('en-CA'); form.elements.inspectedAt.disabled = true; form.elements.status.value = 'nueva'; form.elements.status.disabled = false;
+  form.elements.importance.value = 'media';
+  form.elements.complianceDueDate.dataset.autoDefault = 'true'; updateDefaultDeadline(true);
   state.pendingPhotos = []; state.editingPhotos = [];
   $('dialogTitle').textContent = 'Nueva observación'; $('saveInspection').textContent = 'Guardar observación';
   $('saveHint').textContent = `Inspección ${state.activeInspectionNumber || inspectionNumber(run)} · registra ${userLabel()}`;
@@ -657,7 +998,11 @@ async function openEditDialog(id) {
   const run = state.inspectionRuns.find(item => item.id === row.inspectionId);
   if (!state.demo && (!row.inspectionId || row.inspectionId !== state.activeInspectionId || run?.status !== 'en_curso')) { showToast('Las inspecciones terminadas se pueden consultar, pero no editar.', true); return; }
   const form = $('inspectionForm'); form.reset(); form.elements.id.value = row.id;
-  for (const key of ['area', 'inspectedAt', 'description', 'notificationDate', 'status', 'notes']) form.elements[key].value = row[key] || '';
+  for (const key of ['area', 'inspectedAt', 'description', 'notificationDate', 'complianceDueDate', 'status', 'notes']) form.elements[key].value = row[key] || '';
+  form.elements.importance.value = importanceOf(row);
+  form.elements.complianceDueDate.disabled = true;
+  $('complianceDueDateHint').textContent = 'La fecha límite queda fijada al registrar el hallazgo.';
+  $('recurrenceField').hidden = true;
   form.elements.inspectedAt.disabled = true; form.elements.status.disabled = true;
   fillLocationOptions(row.area, row.location); fillDepartment(row.department);
   state.pendingPhotos = []; state.editingPhotos = (row.photos || []).map(photo => ({ ...photo }));
@@ -680,14 +1025,18 @@ async function saveInspection(event) {
     const fields = {
       area: form.elements.area.value, inspectedAt: form.elements.inspectedAt.value,
       location: formValue(form, 'location', 'locationOther'), description: form.elements.description.value.trim(),
+      importance: form.elements.importance.value,
       department: formValue(form, 'department', 'departmentOther'), notificationDate: form.elements.notificationDate.value,
+      complianceDueDate: form.elements.complianceDueDate.value, reincidenceOf: form.elements.reincidenceOf.value,
       status: form.elements.status.value, notes: form.elements.notes.value.trim()
     };
     const id = form.elements.id.value || (state.demo ? `demo-${crypto.randomUUID()}` : firebaseApi.doc(firebaseApi.collection(firebaseApi.db, COLLECTION)).id);
     const current = state.records.find(item => item.id === id);
+    fields.reincidenceOf = current?.reincidenceOf || fields.reincidenceOf;
     const run = state.inspectionRuns.find(item => item.id === (current?.inspectionId || state.activeInspectionId));
     if (!state.demo && (!run || run.status !== 'en_curso')) throw new Error('Guarda las observaciones dentro de una inspección en curso.');
-    if (!state.demo && !current && state.records.some(row => row.area === fields.area && normalizeLocation(row.location) === normalizeLocation(fields.location))) {
+    if (fields.complianceDueDate && fields.complianceDueDate < fields.inspectedAt) throw new Error('La fecha límite no puede ser anterior a la fecha de inspección.');
+    if (!state.demo && !current && state.records.some(row => row.inspectionId === run.id && row.area === fields.area && normalizeLocation(row.location) === normalizeLocation(fields.location))) {
       fillLocationOptions(fields.area);
       throw new Error('Esa ubicación o proceso ya tiene una observación registrada. Selecciona una ubicación disponible.');
     }
@@ -695,7 +1044,7 @@ async function saveInspection(event) {
     if (state.demo) {
       const photos = [...state.editingPhotos, ...state.pendingPhotos.map(photo => ({ preview: photo.preview, name: photo.name, origin: photo.origin }))];
       const run = state.inspectionRuns.find(item => item.id === (current?.inspectionId || state.activeInspectionId));
-      const record = { ...current, ...fields, id, inspectionId: run?.id || current?.inspectionId, inspectionNumber: run?.inspectionNumber || current?.inspectionNumber, photos, source: current?.source || 'app', inspectorName: current?.inspectorName || userLabel(), inspectorEmail: current?.inspectorEmail || state.user.email, inspectorUid: current?.inspectorUid || state.user.uid, createdByName: current?.createdByName || userLabel(), updatedByName: userLabel() };
+      const record = { ...current, ...fields, complianceCompletedAt: current?.complianceCompletedAt || (fields.status === 'cumple' ? fields.inspectedAt : ''), id, inspectionId: run?.id || current?.inspectionId, inspectionNumber: run?.inspectionNumber || current?.inspectionNumber, photos, source: current?.source || 'app', inspectorName: current?.inspectorName || userLabel(), inspectorEmail: current?.inspectorEmail || state.user.email, inspectorUid: current?.inspectorUid || state.user.uid, createdByName: current?.createdByName || userLabel(), updatedByName: userLabel() };
       const index = state.records.findIndex(item => item.id === id);
       if (index >= 0) state.records[index] = record; else state.records.unshift(record);
       $('inspectionDialog').close(); state.pendingPhotos = []; render(); showToast('Observación guardada en el ejemplo local.');
@@ -708,38 +1057,95 @@ async function saveInspection(event) {
       await uploadBytes(ref(firebaseApi.storage, path), file.blob, { contentType: 'image/jpeg', customMetadata: { origin: file.origin, uploadedBy: state.user.uid } });
       photos.push({ path, name: file.name.slice(0, 120), uploadedBy: state.user.uid, origin: file.origin });
     }
+    const { complianceDueDate, reincidenceOf, ...inspectionFields } = fields;
     const payload = {
-      ...fields, inspectionId: current?.inspectionId || run.id, inspectionNumber: current?.inspectionNumber || run.inspectionNumber,
+      ...inspectionFields, inspectionId: current?.inspectionId || run.id, inspectionNumber: current?.inspectionNumber || run.inspectionNumber,
       photos, inspectorName: current?.inspectorName || userLabel(),
       inspectorEmail: current?.inspectorEmail || state.user.email, inspectorUid: current?.inspectorUid || state.user.uid,
       createdBy: current?.createdBy || state.user.uid, createdAt: current?.createdAt || serverTimestamp(),
       updatedBy: state.user.uid, updatedByName: userLabel(), updatedAt: serverTimestamp(),
       source: current?.source || 'app'
     };
-    await setDoc(doc(db, COLLECTION, id), payload);
+    if (!current) { payload.complianceDueDate = complianceDueDate; payload.reincidenceOf = reincidenceOf || ''; }
+    await setDoc(doc(db, COLLECTION, id), payload, { merge: true });
     await updateDoc(doc(db, RUNS, run.id), { participants: arrayUnion(userLabel()), updatedBy: state.user.uid, updatedByName: userLabel(), updatedAt: serverTimestamp() });
     $('inspectionDialog').close(); showToast(current ? 'La observación fue actualizada.' : 'Observación guardada en Firebase.');
   } catch (error) { showToast(friendlyError(error), true); }
   finally { saveButton.disabled = false; saveButton.textContent = form.elements.id.value ? 'Guardar cambios' : 'Guardar observación'; }
 }
 
-async function exportPdf() {
+function exportRowsForCurrentView() {
   const selectedRun = state.tab === 'Historial' ? state.inspectionRuns.find(run => run.id === state.selectedInspectionId) : null;
-  const rows = state.tab === 'Inicio' || state.tab === 'General'
+  return state.tab === 'Cumplimientos'
+    ? state.records.filter(row => ['no_cumple', 'parcial'].includes(row.status))
+    : state.tab === 'Inicio' || state.tab === 'General'
     ? [...state.records].sort((a, b) => (b.inspectedAt || '').localeCompare(a.inspectedAt || ''))
     : state.tab === 'Historial' && selectedRun
       ? recordsForView().filter(row => row.inspectionId === selectedRun.id)
       : state.tab === 'Historial' && state.selectedInspectionDate !== null
         ? recordsForView().filter(row => (row.inspectedAt || '') === state.selectedInspectionDate)
       : recordsForView();
+}
+
+function exportTitleForCurrentView() {
+  const selectedRun = state.tab === 'Historial' ? state.inspectionRuns.find(run => run.id === state.selectedInspectionId) : null;
+  const sectionTitle = getSections().find(section => section.id === state.tab)?.title || 'Reporte de inspección';
+  return state.tab === 'Inicio' ? 'Inspección completa' : selectedRun ? inspectionNumber(selectedRun) : state.tab === 'Historial' && state.selectedInspectionDate !== null ? inspectionNumber(state.selectedInspectionDate) : state.tab === 'Historial' ? 'Historial de inspecciones' : state.tab === 'General' ? 'Reporte general de inspección' : sectionTitle;
+}
+
+function exportSlug() {
+  return state.tab.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+}
+
+async function exportExcel() {
+  const rows = exportRowsForCurrentView();
   if (!rows.length) { showToast('No hay observaciones para exportar.'); return; }
+  const button = $('exportExcelButton'); button.disabled = true;
+  try {
+    const XLSX = await loadXlsxLibrary();
+    const data = rows.map(row => ({
+      'N.º de inspección': row.inspectionNumber || inspectionNumber(row.inspectedAt),
+      'Fecha de inspección': row.inspectedAt || '',
+      Área: areaTitle(row.area),
+      'Sección de origen': row.sourceSection || '',
+      Ubicación: row.location || '',
+      'Hallazgo / observación': row.description || '',
+      'Importancia': importanceLabel(importanceOf(row)),
+      'Departamento responsable': row.department || '',
+      'Registró': row.inspectorName || row.createdByName || '',
+      'Fecha de notificación': row.notificationDateSource || row.notificationDate || '',
+      'Fecha límite de cumplimiento': row.complianceDueDate || '',
+      'Estado del plazo': row.complianceDueDate ? complianceResult(row).kind : 'Sin plazo',
+      'Días de retraso': row.complianceDueDate && complianceResult(row).kind === 'vencido' ? complianceResult(row).days : 0,
+      'Reincidencia vinculada': row.reincidenceOf ? 'Sí' : 'No',
+      'Días abiertos': daysOpen(row),
+      Estado: STATUS[row.status] || 'Sin estado',
+      'Acción / comentarios': row.notes || '',
+      Evidencias: (row.photos || []).length
+    }));
+    const sheet = XLSX.utils.json_to_sheet(data);
+    sheet['!cols'] = [{ wch: 24 }, { wch: 16 }, { wch: 18 }, { wch: 22 }, { wch: 35 }, { wch: 70 }, { wch: 14 }, { wch: 30 }, { wch: 24 }, { wch: 20 }, { wch: 24 }, { wch: 22 }, { wch: 12 }, { wch: 12 }, { wch: 14 }, { wch: 60 }, { wch: 14 }];
+    if (sheet['!ref']) sheet['!autofilter'] = { ref: sheet['!ref'] };
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, sheet, 'Hallazgos');
+    workbook.Props = { Title: exportTitleForCurrentView(), Subject: 'Inspección de instalaciones EXPALSA', Author: 'EXPALSA' };
+    XLSX.writeFile(workbook, `reporte-inspeccion-${exportSlug()}-${new Date().toLocaleDateString('en-CA')}.xlsx`, { bookType: 'xlsx', compression: true });
+    showToast('Archivo Excel descargado.');
+  } catch (error) { showToast(`No se pudo generar el archivo Excel: ${friendlyError(error)}`, true); }
+  finally { button.disabled = false; }
+}
+
+async function exportPdf() {
+  const rows = exportRowsForCurrentView();
+  if (!rows.length) { showToast('No hay observaciones para exportar.'); return; }
+  const selectedRun = state.tab === 'Historial' ? state.inspectionRuns.find(run => run.id === state.selectedInspectionId) : null;
   const button = $('exportButton'); button.disabled = true;
   try {
     await loadPdfLibraries();
     const Pdf = globalThis.jspdf?.jsPDF;
     if (!Pdf || !Pdf.API.autoTable) throw new Error('No se pudo cargar el módulo PDF.');
     const pdf = new Pdf({ orientation: 'portrait', unit: 'mm', format: 'a4' });
-    const title = state.tab === 'Inicio' ? 'Inspección completa' : selectedRun ? inspectionNumber(selectedRun) : state.tab === 'Historial' && state.selectedInspectionDate !== null ? inspectionNumber(state.selectedInspectionDate) : state.tab === 'Historial' ? 'Historial de inspecciones' : state.tab === 'General' ? 'Reporte general de inspección' : areaTitle(state.tab);
+    const title = exportTitleForCurrentView();
     const generated = new Date().toLocaleString('es-EC', { dateStyle: 'medium', timeStyle: 'short' });
     const inspectionDates = rows.map(row => row.inspectedAt).filter(Boolean).sort();
     const dateRange = inspectionDates.length > 1 && inspectionDates[0] !== inspectionDates.at(-1)
@@ -797,9 +1203,9 @@ async function exportPdf() {
 
     const metrics = [
       { label: 'HALLAZGOS', value: rows.length, color: palette.darkBlue },
-      { label: 'CUMPLE', value: counts.cumple, color: statusColors.cumple.accent },
-      { label: 'NO CUMPLE', value: counts.no_cumple, color: statusColors.no_cumple.accent },
-      { label: 'PARCIAL', value: counts.parcial, color: statusColors.parcial.accent },
+      { label: 'CERRADO', value: counts.cumple, color: statusColors.cumple.accent },
+      { label: 'ABIERTO', value: counts.no_cumple, color: statusColors.no_cumple.accent },
+      { label: 'EN CURSO', value: counts.parcial, color: statusColors.parcial.accent },
       { label: 'NUEVAS', value: counts.nueva, color: statusColors.nueva.accent }
     ];
     const metricGap = 2.5, metricX = 9, metricY = 42, metricH = 19;
@@ -850,26 +1256,26 @@ async function exportPdf() {
       } catch { imageData.set(key, null); }
     }));
     pdf.autoTable({
-      startY: tableStartY, showHead: 'everyPage', head: [['FECHA / NOTIFICACIÓN', 'ÁREA / UBICACIÓN', 'HALLAZGO / ACCIÓN / SEGUIMIENTO', 'RESPONSABLE', 'REGISTRÓ', 'DÍAS', 'ESTADO', 'FOTOS']],
-      body: rows.map(row => [`${dateLabel(row.inspectedAt)}\nNotif.: ${row.notificationDateSource || dateLabel(row.notificationDate)}`, `${areaTitle(row.area)}${row.sourceSection ? `\n${row.sourceSection}` : ''}\n${row.location}`, `${row.description}${row.notes ? `\n${row.notes}` : ''}`, row.department || '—', row.inspectorName || row.createdByName || '—', daysOpen(row), STATUS[row.status] || '—', (row.photos || []).length ? '' : 'Sin evidencia']),
+      startY: tableStartY, showHead: 'everyPage', head: [['FECHA / NOTIFICACIÓN', 'ÁREA / UBICACIÓN', 'HALLAZGO / ACCIÓN / SEGUIMIENTO', 'RESPONSABLE', 'REGISTRÓ', 'IMPORTANCIA', 'DÍAS', 'ESTADO', 'FOTOS']],
+      body: rows.map(row => [`${dateLabel(row.inspectedAt)}\nNotif.: ${row.notificationDateSource || dateLabel(row.notificationDate)}`, `${areaTitle(row.area)}${row.sourceSection ? `\n${row.sourceSection}` : ''}\n${row.location}`, `${row.description}${row.notes ? `\n${row.notes}` : ''}`, row.department || '—', row.inspectorName || row.createdByName || '—', importanceLabel(importanceOf(row)), daysOpen(row), STATUS[row.status] || '—', (row.photos || []).length ? '' : 'Sin evidencia']),
       theme: 'grid', styles: { font: 'helvetica', fontSize: 6.5, cellPadding: 1.8, textColor: palette.ink, lineColor: palette.line, lineWidth: .18, minCellHeight: 16, valign: 'middle', overflow: 'linebreak' },
       headStyles: { fillColor: palette.darkBlue, textColor: palette.white, fontSize: 6.1, fontStyle: 'bold', halign: 'left', cellPadding: 2.3 },
       alternateRowStyles: { fillColor: palette.pale },
       columnStyles: {
-        0: { cellWidth: 18, fontSize: 5.5 }, 1: { cellWidth: 26, fontStyle: 'bold', fontSize: 5.8 }, 2: { cellWidth: 37, fontSize: 5.8 },
-        3: { cellWidth: 19, fontSize: 5.5 }, 4: { cellWidth: 18, fontSize: 5.5 }, 5: { cellWidth: 10, halign: 'center', fontSize: 5.8 },
-        6: { cellWidth: 21, halign: 'center', fontStyle: 'bold', fontSize: 5.8 }, 7: { cellWidth: 43, halign: 'center', fontSize: 5.8, textColor: palette.muted }
+        0: { cellWidth: 16, fontSize: 5.5 }, 1: { cellWidth: 24, fontStyle: 'bold', fontSize: 5.8 }, 2: { cellWidth: 31, fontSize: 5.8 },
+        3: { cellWidth: 17, fontSize: 5.5 }, 4: { cellWidth: 16, fontSize: 5.5 }, 5: { cellWidth: 14, halign: 'center', fontSize: 5.4 },
+        6: { cellWidth: 8, halign: 'center', fontSize: 5.8 }, 7: { cellWidth: 19, halign: 'center', fontStyle: 'bold', fontSize: 5.8 }, 8: { cellWidth: 47, halign: 'center', fontSize: 5.8, textColor: palette.muted }
       },
       margin: { top: 38, left: 9, right: 9, bottom: 19 },
       didParseCell: data => {
         if (data.section !== 'body') return;
         const row = rows[data.row.index];
-        if (data.column.index === 6) {
+        if (data.column.index === 7) {
           const color = statusColors[row?.status] || statusColors.nueva;
           data.cell.styles.fillColor = color.fill; data.cell.styles.textColor = color.text;
           data.cell.styles.fontStyle = 'bold'; data.cell.styles.halign = 'center';
         }
-        if (data.column.index === 7) {
+        if (data.column.index === 8) {
           const photos = (row?.photos || []).slice(0, 6).filter(photo => imageData.get(photo.path || photo.previewUrl || photo.name));
           const lines = Math.ceil(photos.length / 2);
           data.cell.styles.minCellHeight = Math.max(16, lines ? 4 + lines * 9 + (lines - 1) * 1.2 : 16);
@@ -877,7 +1283,7 @@ async function exportPdf() {
         }
       },
       didDrawCell: data => {
-        if (data.section !== 'body' || data.column.index !== 7) return;
+        if (data.section !== 'body' || data.column.index !== 8) return;
         const photos = (rows[data.row.index]?.photos || []).slice(0, 6).filter(photo => imageData.get(photo.path || photo.previewUrl || photo.name));
         photos.forEach((photo, index) => {
           const key = photo.path || photo.previewUrl || photo.name, source = imageData.get(key);
@@ -904,10 +1310,61 @@ async function exportPdf() {
       pdf.text(`PÁGINA ${page} DE ${pages}`, 201, 289, { align: 'right' });
     }
     pdf.setProperties({ title: `Reporte de inspección · ${title}`, subject: 'Inspección de instalaciones EXPALSA', author: 'EXPALSA · Sistema de gestión de calidad' });
-    const slug = state.tab.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+    const slug = exportSlug();
     pdf.save(`reporte-inspeccion-${slug}-${new Date().toLocaleDateString('en-CA')}.pdf`);
   } catch (error) { showToast(`No se pudo generar el PDF: ${friendlyError(error)}`, true); }
   finally { button.disabled = false; }
+}
+
+async function deleteInspection(runId) {
+  if (state.demo) {
+    const findings = state.records.filter(row => row.inspectionId === runId);
+    const corrections = state.corrections.filter(action => findings.some(row => row.id === action.observationId));
+    const progress = Object.values(state.progress).filter(item => item.inspectionId === runId);
+    const run = state.inspectionRuns.find(item => item.id === runId);
+    if (!run) return;
+    const number = inspectionNumber(run);
+    const message = `¿Eliminar la inspección ${number} del ejemplo? Se quitarán ${findings.length} hallazgos, ${corrections.length} acciones correctivas y ${progress.length} avances guardados. Esta acción no se puede deshacer.`;
+    if (!window.confirm(message)) return;
+    const findingIds = new Set(findings.map(row => row.id));
+    state.inspectionRuns = state.inspectionRuns.filter(item => item.id !== runId);
+    state.records = state.records.filter(row => row.inspectionId !== runId);
+    state.corrections = state.corrections.filter(action => !findingIds.has(action.observationId));
+    state.progress = Object.fromEntries(Object.entries(state.progress).filter(([, item]) => item.inspectionId !== runId));
+    if (state.selectedInspectionId === runId) state.selectedInspectionId = null;
+    if (state.activeInspectionId === runId) { state.activeInspectionId = null; state.activeInspectionNumber = null; }
+    render(); showToast('Inspección eliminada del ejemplo local.');
+    return;
+  }
+  if (state.role !== 'admin') { showToast('Solo un administrador puede eliminar inspecciones.', true); return; }
+  const run = state.inspectionRuns.find(item => item.id === runId);
+  if (!run || runId.startsWith('legacy:')) { showToast('No se encontró el registro principal de esta inspección.', true); return; }
+  const findings = state.records.filter(row => row.inspectionId === runId);
+  const findingIds = new Set(findings.map(row => row.id));
+  const corrections = state.corrections.filter(action => findingIds.has(action.observationId));
+  const progress = Object.values(state.progress).filter(item => item.inspectionId === runId);
+  const message = `¿Eliminar la inspección ${inspectionNumber(run)}? Se borrarán permanentemente ${findings.length} hallazgos, ${corrections.length} acciones correctivas, ${progress.length} avances guardados y sus fotos de evidencia. Esta acción no se puede deshacer.`;
+  if (!window.confirm(message)) return;
+  const documents = [
+    ...findings.map(row => [COLLECTION, row.id]),
+    ...corrections.map(action => [CORRECTIONS, action.id]),
+    ...progress.map(item => [PROGRESS, item.id]),
+    [RUNS, runId]
+  ];
+  if (documents.length > 500) { showToast('La inspección tiene más de 500 registros relacionados; no se eliminó. Solicita una eliminación controlada.', true); return; }
+  const photos = [...findings.flatMap(row => row.photos || []), ...corrections.flatMap(action => action.photos || [])].filter(photo => photo.path);
+  try {
+    await loadInspectionModules();
+    const batch = firebaseApi.writeBatch(firebaseApi.db);
+    for (const [collectionName, id] of documents) batch.delete(firebaseApi.doc(firebaseApi.db, collectionName, id));
+    await batch.commit();
+    const photoCleanup = await Promise.allSettled(photos.map(photo => firebaseApi.deleteObject(firebaseApi.ref(firebaseApi.storage, photo.path))));
+    const failedPhotoDeletes = photoCleanup.filter(result => result.status === 'rejected').length;
+    if (state.selectedInspectionId === runId) state.selectedInspectionId = null;
+    if (state.activeInspectionId === runId) { state.activeInspectionId = null; state.activeInspectionNumber = null; }
+    render();
+    showToast(failedPhotoDeletes ? `Inspección eliminada; ${failedPhotoDeletes} foto(s) requieren limpieza manual.` : 'Inspección y registros asociados eliminados.');
+  } catch (error) { showToast(`No se pudo eliminar la inspección: ${friendlyError(error)}`, true); }
 }
 
 async function initialize() {
@@ -934,7 +1391,35 @@ async function initialize() {
   } catch (error) { $('authMessage').textContent = friendlyError(error); $('authMessage').classList.add('error'); }
 }
 
-document.addEventListener('click', event => {
+document.addEventListener('click', async event => {
+  if (event.target.closest('#clearComplianceFilter')) { state.complianceFilter = ''; renderCompliance(); return; }
+  const complianceFilter = event.target.closest('[data-compliance-filter]');
+  if (complianceFilter) {
+    const filter = complianceFilter.dataset.complianceFilter;
+    state.complianceFilter = state.complianceFilter === filter ? '' : filter;
+    renderCompliance(); return;
+  }
+  if (event.target.closest('#clearPivotFilter')) { state.pivotFilter = { status: '', area: '', departmentKey: '' }; renderDashboard(); return; }
+  const pivotDepartment = event.target.closest('[data-pivot-department]');
+  if (pivotDepartment) {
+    const departmentKey = pivotDepartment.dataset.pivotDepartment;
+    state.pivotFilter.departmentKey = state.pivotFilter.departmentKey === departmentKey ? '' : departmentKey;
+    renderDashboard(); return;
+  }
+  const pivotArea = event.target.closest('[data-pivot-area]');
+  const pivotStatus = event.target.closest('[data-pivot-status]');
+  if (pivotArea || pivotStatus) {
+    const area = pivotArea?.dataset.pivotArea || '';
+    const status = pivotArea?.dataset.pivotStatus || pivotStatus?.dataset.pivotStatus || '';
+    if (status) setPivotStatus(status, area);
+    else {
+      state.pivotFilter = state.pivotFilter.area === area && !state.pivotFilter.status && !state.pivotFilter.departmentKey
+        ? { status: '', area: '', departmentKey: '' }
+        : { status: '', area, departmentKey: '' };
+      renderDashboard();
+    }
+    return;
+  }
   const nav = event.target.closest('[data-tab]');
   if (nav) { state.tab = nav.dataset.tab; if (state.tab === 'Historial') { state.selectedInspectionDate = null; state.selectedInspectionId = null; } $('sidebar').classList.remove('open'); render(); return; }
   const openInspection = event.target.closest('[data-open-inspection]');
@@ -946,6 +1431,8 @@ document.addEventListener('click', event => {
     if (run?.status === 'en_curso') { state.activeInspectionId = run.id; state.activeInspectionNumber = run.inspectionNumber; }
     render(); return;
   }
+  const deleteInspectionButton = event.target.closest('[data-delete-inspection]');
+  if (deleteInspectionButton) { await deleteInspection(deleteInspectionButton.dataset.deleteInspection); return; }
   const viewPhoto = event.target.closest('[data-view-photo]');
   if (viewPhoto) { openPhotoViewer(viewPhoto.dataset.viewPhoto); return; }
   if (event.target.closest('#backToHistory')) { state.selectedInspectionDate = null; state.selectedInspectionId = null; render(); return; }
@@ -964,23 +1451,29 @@ $('loginForm').addEventListener('submit', async event => {
 });
 $('demoButton').addEventListener('click', enterDemo);
 $('resetDemoButton').addEventListener('click', resetDemo);
+$('statusDonut').addEventListener('click', statusAtDonutPoint);
 $('logoutButton').addEventListener('click', () => state.demo ? exitDemo() : firebaseApi.signOut(firebaseApi.auth));
 $('newInspection').addEventListener('click', async () => {
   const area = AREAS.includes(state.tab) ? state.tab : 'PLANTA';
   const selectedRun = state.tab === 'Historial' ? state.inspectionRuns.find(run => run.id === state.selectedInspectionId) : null;
-  if (selectedRun?.status === 'en_curso') { state.activeInspectionId = selectedRun.id; state.activeInspectionNumber = selectedRun.inspectionNumber; openNewDialog(area); return; }
+  if (selectedRun?.status === 'en_curso') { state.activeInspectionId = selectedRun.id; state.activeInspectionNumber = selectedRun.inspectionNumber; state.tab = area; state.selectedInspectionId = null; state.selectedInspectionDate = null; render(); openNewDialog(area); return; }
   const activeRun = state.inspectionRuns.find(run => run.id === state.activeInspectionId);
-  if (activeRun?.status === 'en_curso' && !selectedRun) { openNewDialog(area); return; }
-  try { await createInspection(area, true); } catch (error) { showToast(friendlyError(error), true); }
+  if (activeRun?.status === 'en_curso') { state.tab = area; state.selectedInspectionId = null; state.selectedInspectionDate = null; render(); openNewDialog(area); return; }
+  try { await createInspection(area, false); } catch (error) { showToast(friendlyError(error), true); }
 });
 $('saveAreaButton').addEventListener('click', saveAreaProgress);
 $('closeInspectionButton').addEventListener('click', closeInspection);
 $('exportButton').addEventListener('click', exportPdf);
+$('exportExcelButton').addEventListener('click', exportExcel);
 $('inspectionForm').addEventListener('submit', saveInspection);
+$('inspectionForm').elements.status.addEventListener('change', () => updateDefaultDeadline());
+$('inspectionForm').elements.notificationDate.addEventListener('input', () => updateDefaultDeadline());
+$('inspectionForm').elements.complianceDueDate.addEventListener('input', event => { event.currentTarget.dataset.autoDefault = ''; });
 $('correctionForm').addEventListener('submit', saveCorrection);
 $('photoClose').addEventListener('click', () => $('photoDialog').close());
 $('photoPrevious').addEventListener('click', () => stepPhoto(-1));
 $('photoNext').addEventListener('click', () => stepPhoto(1));
+$('photoDownloadButton').addEventListener('click', downloadCurrentPhoto);
 $('photoReplaceButton').addEventListener('click', () => $('photoReplaceInput').click());
 $('photoReplaceInput').addEventListener('change', event => { const file = event.currentTarget.files?.[0]; event.currentTarget.value = ''; if (file) changeCurrentPhoto(file); });
 $('photoDeleteButton').addEventListener('click', () => { if (window.confirm('¿Eliminar esta foto de la evidencia de la observación?')) changeCurrentPhoto(); });
@@ -988,9 +1481,11 @@ $('photoDialog').addEventListener('close', () => { state.viewingPhoto = null; $(
 $('correctionCamera').addEventListener('change', event => handleCorrectionPhotoFiles(event.currentTarget));
 $('correctionGallery').addEventListener('change', event => handleCorrectionPhotoFiles(event.currentTarget));
 $('correctionPhotoPreview').addEventListener('click', event => { const remove = event.target.closest('[data-remove-correction-photo]'); if (remove) { state.correctionPhotos.splice(Number(remove.dataset.removeCorrectionPhoto), 1); drawCorrectionPhotoPreview(); } });
-$('inspectionForm').elements.area.addEventListener('change', event => fillLocationOptions(event.currentTarget.value));
-$('locationSelect').addEventListener('change', () => syncOtherChoice($('locationSelect'), $('locationOther')));
-$('departmentSelect').addEventListener('change', () => syncOtherChoice($('departmentSelect'), $('departmentOther')));
+$('inspectionForm').elements.area.addEventListener('change', event => { fillLocationOptions(event.currentTarget.value); updateRecurrenceChoices(); });
+$('locationSelect').addEventListener('change', () => { syncOtherChoice($('locationSelect'), $('locationOther')); updateRecurrenceChoices(); });
+$('departmentSelect').addEventListener('change', () => { syncOtherChoice($('departmentSelect'), $('departmentOther')); updateRecurrenceChoices(); });
+$('locationOther').addEventListener('input', updateRecurrenceChoices);
+$('departmentOther').addEventListener('input', updateRecurrenceChoices);
 $('closeDialog').addEventListener('click', () => $('inspectionDialog').close());
 $('cancelDialog').addEventListener('click', () => $('inspectionDialog').close());
 $('closeCorrection').addEventListener('click', () => $('correctionDialog').close());
@@ -1002,6 +1497,7 @@ $('cameraInput').addEventListener('change', event => handlePhotoFiles(event.curr
 $('galleryInput').addEventListener('change', event => handlePhotoFiles(event.currentTarget));
 $('mobileMenu').addEventListener('click', () => $('sidebar').classList.toggle('open'));
 document.addEventListener('keydown', event => { if (event.key === 'Escape') $('sidebar').classList.remove('open'); });
+setInterval(() => { if (state.user) { drawNavigation(); renderCompliance(); } }, 60000);
 
 initialize();
 
