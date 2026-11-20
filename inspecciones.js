@@ -149,18 +149,19 @@ function setConnection(connected, label = '') {
   if (dot) { dot.style.background = connected ? '#53b694' : '#d09a49'; dot.style.boxShadow = connected ? '0 0 0 3px rgba(83,182,148,.12)' : '0 0 0 3px rgba(208,154,73,.13)'; }
 }
 
-function drawNavigation() {
+function drawNavigation(sections = getSections()) {
   $('sectionNav').className = 'side-nav';
   const statusCounts = Object.fromEntries(Object.keys(STATUS).map(key => [key, 0]));
   const departmentCounts = new Map();
   let overdue = 0;
+  const today = todayIso();
   for (const row of state.records) {
     if (statusCounts[row.status] !== undefined) statusCounts[row.status]++;
-    if (['no_cumple', 'parcial', 'nueva'].includes(row.status) && row.complianceDueDate && complianceResult(row).kind === 'vencido') overdue++;
+    if (['no_cumple', 'parcial', 'nueva'].includes(row.status) && row.complianceDueDate && complianceResult(row, today).kind === 'vencido') overdue++;
     for (const department of rowDepartments(row)) departmentCounts.set(department.key, (departmentCounts.get(department.key) || 0) + 1);
   }
   const alerts = statusCounts.no_cumple + statusCounts.parcial;
-  $('sectionNav').innerHTML = getSections().map(item => `<button class="nav-button${state.tab === item.id ? ' active' : ''}" data-tab="${escapeHtml(item.id)}" type="button"><span class="nav-icon">${item.icon}</span><span>${escapeHtml(item.title)}</span>${item.id === 'Alertas' && alerts ? `<span class="nav-alert-count">${alerts}</span>` : item.id === 'Cumplimientos' && overdue ? `<span class="nav-alert-count">${overdue}</span>` : item.departmentKey ? `<span class="nav-alert-count department-count">${departmentCounts.get(item.departmentKey) || 0}</span>` : ''}</button>`).join('');
+  $('sectionNav').innerHTML = sections.map(item => `<button class="nav-button${state.tab === item.id ? ' active' : ''}" data-tab="${escapeHtml(item.id)}" type="button"><span class="nav-icon">${item.icon}</span><span>${escapeHtml(item.title)}</span>${item.id === 'Alertas' && alerts ? `<span class="nav-alert-count">${alerts}</span>` : item.id === 'Cumplimientos' && overdue ? `<span class="nav-alert-count">${overdue}</span>` : item.departmentKey ? `<span class="nav-alert-count department-count">${departmentCounts.get(item.departmentKey) || 0}</span>` : ''}</button>`).join('');
 }
 
 function getSections() {
@@ -298,8 +299,8 @@ function groupInspections(records) {
 
 function render() {
   if (!state.user) return;
-  drawNavigation();
   const sections = getSections();
+  drawNavigation(sections);
   const selected = sections.find(item => item.id === state.tab) || sections[0];
   const selectedInspection = state.tab === 'Historial' && (state.selectedInspectionId !== null || state.selectedInspectionDate !== null);
   const selectedRun = state.inspectionRuns.find(run => run.id === state.selectedInspectionId);
